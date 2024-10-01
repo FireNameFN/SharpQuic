@@ -21,12 +21,10 @@ public class QuicPacketProtectionTests {
             75300901100f088394c8f03e51570806 048000ffff"
             .Replace("\r\n", "").Replace(" ", ""), frame);
 
-        Span<byte> destinationConnectionId = stackalloc byte[8];
-
-        Converter.HexToBytes("8394c8f03e515708", destinationConnectionId);
+        byte[] destinationConnectionId = Converter.HexToBytes("8394c8f03e515708");
 
         InitialPacket packet = new() {
-            DestinationConnectionId = destinationConnectionId.ToArray(),
+            DestinationConnectionId = destinationConnectionId,
             SourceConnectionId = [],
             Token = [],
             PacketNumberLength = 4,
@@ -38,7 +36,9 @@ public class QuicPacketProtectionTests {
 
         Assert.That(header.Equals("c300000001088394c8f03e5157080000449e00000002", StringComparison.CurrentCultureIgnoreCase));
 
-        QuicPacketProtection protection = new(QuicPacketProtection.EndpointType.Client, [], destinationConnectionId.ToArray());
+        QuicPacketProtection protection = new(EndpointType.Client);
+
+        protection.GenerateInitialKeys([], destinationConnectionId);
 
         byte[] encodedPacket = protection.Protect(packet);
 
@@ -84,7 +84,9 @@ public class QuicPacketProtectionTests {
             e221af44860018ab0856972e194cd934"
             .Replace("\r\n", "").Replace(" ", ""), StringComparison.CurrentCultureIgnoreCase));
 
-        QuicPacketProtection destinationProtection = new(QuicPacketProtection.EndpointType.Server, destinationConnectionId.ToArray(), []);
+        QuicPacketProtection destinationProtection = new(EndpointType.Server);
+
+        destinationProtection.GenerateInitialKeys([], destinationConnectionId);
 
         InitialPacket unprotectedPacket = destinationProtection.Unprotect(encodedPacket);
 

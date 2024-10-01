@@ -52,13 +52,17 @@ public static class Serializer {
     }
 
     public static byte ReadByte(Stream stream) {
-        return (byte)stream.ReadByte();
+        Span<byte> span = stackalloc byte[sizeof(byte)];
+
+        stream.ReadExactly(span);
+
+        return span[0];
     }
 
     public static ushort ReadUInt16(Stream stream) {
         Span<byte> span = stackalloc byte[sizeof(ushort)];
 
-        stream.Read(span);
+        stream.ReadExactly(span);
 
         return BinaryPrimitives.ReadUInt16BigEndian(span);
     }
@@ -66,7 +70,7 @@ public static class Serializer {
     public static uint ReadUInt32(Stream stream) {
         Span<byte> span = stackalloc byte[sizeof(uint)];
 
-        stream.Read(span);
+        stream.ReadExactly(span);
 
         return BinaryPrimitives.ReadUInt32BigEndian(span);
     }
@@ -74,7 +78,7 @@ public static class Serializer {
     public static uint ReadWithLength(Stream stream, int length) {
         Span<byte> span = stackalloc byte[sizeof(uint)];
 
-        stream.Read(span[^length..]);
+        stream.ReadExactly(span[^length..]);
 
         return BinaryPrimitives.ReadUInt32BigEndian(span);
     }
@@ -82,7 +86,7 @@ public static class Serializer {
     public static ulong ReadVariableLength(Stream stream) {
         Span<byte> span = stackalloc byte[sizeof(ulong) + 7];
 
-        stream.Read(span.Slice(7, 1));
+        stream.ReadExactly(span.Slice(7, 1));
 
         int length = (span[7] & 0b11000000) switch {
             0b00000000 => 0,
@@ -94,7 +98,7 @@ public static class Serializer {
         span[7] &= 0b00111111;
 
         if(length > 0)
-            stream.Read(span.Slice(8, length));
+            stream.ReadExactly(span.Slice(8, length));
 
         return BinaryPrimitives.ReadUInt64BigEndian(span.Slice(length, 8));
     }

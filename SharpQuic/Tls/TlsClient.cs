@@ -1,39 +1,63 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
-using System.Threading.Tasks;
 using Org.BouncyCastle.Crypto;
+using Org.BouncyCastle.Crypto.Agreement;
 using Org.BouncyCastle.Crypto.Generators;
 using Org.BouncyCastle.Crypto.Parameters;
 
 namespace SharpQuic.Tls;
 
 public sealed class TlsClient {
-    public Stream InitialStream { get; set; }
+    public PacketWriter InitialPacketWriter { get; set; }
 
-    public Stream HandshakeStream { get; set; }
-
-    public Stream OneRttStream { get; set; }
+    public PacketWriter HandshakePacketWriter { get; set; }
 
     readonly AsymmetricCipherKeyPair keyPair;
+
+    internal readonly byte[] key = new byte[32];
+
+    uint legacySessionId;
+
+    byte[] clientHello;
+
+    byte[] serverHello;
+
+    byte[] serverFinished;
+
+    internal byte[] clientHandshakeSecret;
+
+    internal byte[] serverHandshakeSecret;
 
     public TlsClient() {
         X25519KeyPairGenerator generator = new();
 
-        generator.Init(new(new(), 0));
+        generator.Init(new(new(), 1));
 
         keyPair = generator.GenerateKeyPair();
     }
 
-    public async Task HandshakeClientAsync() {
-        await SendClientHelloAsync();
+    public void DeriveSecrets() {
+        Span<byte> hash = stackalloc byte[32];
+
+        HKDF.Extract(HashAlgorithmName.SHA256, [], [], hash);
+
+        HKDFExtensions.ExpandLabel(hash, "derived", hash);
+
+        HKDF.Extract(HashAlgorithmName.SHA256, key, hash, hash);
+
+        clientHandshakeSecret = new byte[32];
+
+        HKDFExtensions.ExpandLabel(hash, "c hs traffic", [..clientHello, ..serverHello], clientHandshakeSecret);
+
+        serverHandshakeSecret = new byte[32];
+
+        HKDFExtensions.ExpandLabel(hash, "s hs traffic", [..clientHello, ..serverHello], serverHandshakeSecret);
     }
 
-    //public Task HandshakeServerAsync() {
-
-    //}
-
-    ValueTask SendClientHelloAsync() {
+    public void SendClientHello() {
         MemoryStream stream = new();
 
         Serializer.WriteUInt16(stream, 0x0303);
@@ -46,8 +70,8 @@ public sealed class TlsClient {
 
         Serializer.WriteByte(stream, 0);
 
-        Serializer.WriteUInt16(stream, 1);
-        Serializer.WriteUInt16(stream, 0x1303);
+        Serializer.WriteUInt16(stream, 2);
+        Serializer.WriteUInt16(stream, (ushort)CipherSuite.ChaCha20Poly1305Sha256);
 
         Serializer.WriteByte(stream, 1);
         Serializer.WriteByte(stream, 0);
@@ -57,10 +81,10 @@ public sealed class TlsClient {
         Serializer.WriteUInt16(stream, (ushort)extensions.Length);
         stream.Write(extensions);
 
-        return SendHandshakeAsync(HandshakeType.ClientHello, stream.ToArray());
+        SendHandshake(HandshakeType.ClientHello, stream.ToArray());
     }
 
-    ValueTask SendServerHelloAsync() {
+    public void SendServerHello() {
         MemoryStream stream = new();
 
         Serializer.WriteUInt16(stream, 0x0303);
@@ -71,9 +95,21 @@ public sealed class TlsClient {
 
         stream.Write(random);
 
+        int legacySessionIdLength = Serializer.GetLength(legacySessionId);
 
+        Serializer.WriteByte(stream, (byte)legacySessionIdLength);
+        Serializer.WriteWithLength(stream, legacySessionId, legacySessionIdLength);
 
-        return SendHandshakeAsync(HandshakeType.ServerHello, stream.ToArray());
+        Serializer.WriteUInt16(stream, (ushort)CipherSuite.ChaCha20Poly1305Sha256);
+
+        Serializer.WriteByte(stream, 0);
+
+        byte[] extensions = GetKeyShareExtension();
+
+        Serializer.WriteUInt16(stream, (ushort)extensions.Length);
+        stream.Write(extensions);
+
+        SendHandshake(HandshakeType.ServerHello, stream.ToArray());
     }
 
     byte[] GetExtensions() {
@@ -85,7 +121,7 @@ public sealed class TlsClient {
         return stream.ToArray();
     }
 
-    byte[] GetSupportedGroupsExtension() {
+    static byte[] GetSupportedGroupsExtension() {
         MemoryStream stream = new();
 
         Serializer.WriteUInt16(stream, (ushort)ExtensionType.SupportedGroups);
@@ -115,7 +151,7 @@ public sealed class TlsClient {
         return stream.ToArray();
     }
 
-    ValueTask SendHandshakeAsync(HandshakeType type, byte[] message) {
+    void SendHandshake(HandshakeType type, byte[] message) {
         MemoryStream stream = new();
 
         Serializer.WriteByte(stream, (byte)type);
@@ -125,30 +161,139 @@ public sealed class TlsClient {
 
         stream.Write(message);
 
-        if(type is HandshakeType.ClientHello or HandshakeType.ServerHello)
-            return SendPlaintextAsync(InitialStream, ContentType.Handshake, stream.ToArray());
-        else
-            //return SendCiphertextAsync(HandshakeStream, ContentType.Handshake, stream.ToArray());
-            return ValueTask.CompletedTask;
+        if(type is HandshakeType.ClientHello or HandshakeType.ServerHello) {
+            byte[] array = stream.ToArray();
+
+            InitialPacketWriter.WriteCrypto(array);
+
+            if(type == HandshakeType.ClientHello)
+                clientHello = array;
+            else
+                serverHello = array;
+        } else
+            HandshakePacketWriter.WriteCrypto(stream.ToArray());
     }
 
-    //ValueTask SendCiphertextAsync(Stream stream, ContentType type, byte[] fragment) {
-        
-    //}
+    public void ReceiveHandshake(byte[] array) {
+        MemoryStream stream = new(array);
 
-    ValueTask SendPlaintextAsync(Stream stream, ContentType type, byte[] fragment) {
-        MemoryStream memory = new();
+        while(stream.Position < stream.Length) {
+            HandshakeType type = (HandshakeType)Serializer.ReadByte(stream);
 
-        Serializer.WriteByte(memory, (byte)type);
+            stream.Position += 3;
 
-        Serializer.WriteUInt16(memory, 0x0303);
+            switch(type) {
+                case HandshakeType.ClientHello:
+                    ReceiveClientHello(stream);
 
-        Serializer.WriteUInt16(memory, (ushort)fragment.Length);
+                    clientHello = array;
 
-        memory.Write(fragment);
+                    break;
+                case HandshakeType.ServerHello:
+                    ReceiveServerHello(stream);
 
-        return stream.WriteAsync(memory.ToArray());
+                    serverHello = array;
+
+                    break;
+            }
+        }
     }
+
+    void ReceiveClientHello(MemoryStream stream) {
+        stream.Position += 34;
+
+        int length = Serializer.ReadByte(stream);
+        legacySessionId = Serializer.ReadWithLength(stream, length);
+
+        length = Serializer.ReadUInt16(stream);
+        stream.Position += length;
+
+        stream.Position += 2;
+
+        ReceiveExtensions(stream);
+    }
+
+    void ReceiveServerHello(MemoryStream stream) {
+        stream.Position += 34;
+
+        int length = Serializer.ReadByte(stream);
+        stream.Position += length;
+
+        stream.Position += 2;
+
+        stream.Position++;
+
+        ReceiveExtensions(stream);
+    }
+
+    void ReceiveExtensions(Stream stream) {
+        int length = Serializer.ReadUInt16(stream);
+
+        long start = stream.Position;
+
+        List<NamedGroup> namedGroups;
+        List<NamedGroupKey> keys = null;
+
+        while(stream.Position - start < length) {
+            ExtensionType type = (ExtensionType)Serializer.ReadUInt16(stream);
+
+            stream.Position += 2;
+
+            switch(type) {
+                case ExtensionType.SupportedGroups:
+                    namedGroups = ReceiveSupportedGroupsExtension(stream);
+                    break;
+                case ExtensionType.KeyShare:
+                    keys = ReceiveKeyShareExtension(stream);
+                    break;
+            }
+        }
+
+        byte[] key = keys.First(key => key.NamedGroup == NamedGroup.X25519).Key;
+
+        X25519Agreement agreement = new();
+
+        agreement.Init(keyPair.Private);
+
+        agreement.CalculateAgreement(new X25519PublicKeyParameters(key), this.key);
+    }
+
+    static List<NamedGroup> ReceiveSupportedGroupsExtension(Stream stream) {
+        int length = Serializer.ReadUInt16(stream);
+
+        List<NamedGroup> list = new(length / 2);
+
+        long start = stream.Position;
+
+        while(stream.Position - start < length)
+            list.Add((NamedGroup)Serializer.ReadUInt16(stream));
+
+        return list;
+    }
+
+    static List<NamedGroupKey> ReceiveKeyShareExtension(Stream stream) {
+        List<NamedGroupKey> list = [];
+
+        int length = Serializer.ReadUInt16(stream);
+
+        long start = stream.Position;
+
+        while(stream.Position - start < length) {
+            NamedGroup namedGroup = (NamedGroup)Serializer.ReadUInt16(stream);
+
+            int keyLength = Serializer.ReadUInt16(stream);
+
+            byte[] key = new byte[keyLength];
+
+            stream.ReadExactly(key);
+
+            list.Add(new(namedGroup, key));
+        }
+
+        return list;
+    }
+
+    readonly record struct NamedGroupKey(NamedGroup NamedGroup, byte[] Key);
 
     enum NamedGroup : ushort {
         SecP521r1 = 0x0019,
@@ -160,13 +305,12 @@ public sealed class TlsClient {
         KeyShare = 51
     }
 
+    enum CipherSuite : ushort {
+        ChaCha20Poly1305Sha256 = 0x1303
+    }
+
     enum HandshakeType : byte {
         ClientHello = 1,
         ServerHello = 2
-    }
-
-    enum ContentType : byte {
-        Handshake = 22,
-        ApplicationData = 23
     }
 }

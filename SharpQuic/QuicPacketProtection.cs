@@ -6,45 +6,53 @@ using SharpQuic.Packets;
 
 namespace SharpQuic;
 
-public sealed class QuicPacketProtection {
-    readonly byte[] sourceKey = new byte[16];
+public sealed class QuicPacketProtection(EndpointType endpointType) {
+    static readonly byte[] InitialSalt = new byte[32];
 
-    readonly byte[] sourceIv = new byte[12];
+    public EndpointType EndpointType { get; } = endpointType;
 
-    readonly byte[] sourceHp = new byte[16];
+    internal readonly byte[] sourceKey = new byte[16];
 
-    readonly byte[] destinationKey = new byte[16];
+    internal readonly byte[] sourceIv = new byte[12];
 
-    readonly byte[] destinationIv = new byte[12];
+    internal readonly byte[] sourceHp = new byte[16];
 
-    readonly byte[] destinationHp = new byte[16];
+    internal readonly byte[] destinationKey = new byte[16];
 
-    public QuicPacketProtection(EndpointType type, byte[] sourceConnectionId, byte[] destinationConnectionId) {
-        Span<byte> initialSalt = stackalloc byte[32];
+    internal readonly byte[] destinationIv = new byte[12];
 
-        Converter.HexToBytes("38762cf7f55934b34d179ae6a4c80cadccbb7f0a", initialSalt);
+    internal readonly byte[] destinationHp = new byte[16];
 
+    static QuicPacketProtection() {
+        Converter.HexToBytes("38762cf7f55934b34d179ae6a4c80cadccbb7f0a", InitialSalt);
+    }
+
+    public void GenerateInitialKeys(byte[] sourceConnectionId, byte[] destinationConnectionId) {
         Span<byte> initialSecret = stackalloc byte[32];
 
-        HKDF.Extract(HashAlgorithmName.SHA256, destinationConnectionId, initialSalt, initialSecret);
+        HKDF.Extract(HashAlgorithmName.SHA256, destinationConnectionId, InitialSalt, initialSecret);
 
-        Span<byte> sourceInitialSecret = stackalloc byte[32];
+        Span<byte> clientInitialSecret = stackalloc byte[32];
 
-        HKDFExtensions.ExpandLabel(initialSecret, type == EndpointType.Client ? "client in" : "server in", sourceInitialSecret);
+        HKDFExtensions.ExpandLabel(initialSecret, "client in", clientInitialSecret);
 
-        HKDFExtensions.ExpandLabel(sourceInitialSecret, "quic key", sourceKey);
-        HKDFExtensions.ExpandLabel(sourceInitialSecret, "quic iv", sourceIv);
-        HKDFExtensions.ExpandLabel(sourceInitialSecret, "quic hp", sourceHp);
+        HKDF.Extract(HashAlgorithmName.SHA256, sourceConnectionId, InitialSalt, initialSecret);
 
-        HKDF.Extract(HashAlgorithmName.SHA256, sourceConnectionId, initialSalt, initialSecret);
+        Span<byte> serverInitialSecret = stackalloc byte[32];
 
-        Span<byte> destinationInitialSecret = stackalloc byte[32];
+        HKDFExtensions.ExpandLabel(initialSecret, "server in", serverInitialSecret);
 
-        HKDFExtensions.ExpandLabel(initialSecret, type == EndpointType.Client ? "server in" : "client in", destinationInitialSecret);
+        GenerateKeys(clientInitialSecret, serverInitialSecret);
+    }
 
-        HKDFExtensions.ExpandLabel(destinationInitialSecret, "quic key", destinationKey);
-        HKDFExtensions.ExpandLabel(destinationInitialSecret, "quic iv", destinationIv);
-        HKDFExtensions.ExpandLabel(destinationInitialSecret, "quic hp", destinationHp);
+    public void GenerateKeys(ReadOnlySpan<byte> clientSecret, ReadOnlySpan<byte> serverSecret) {
+        HKDFExtensions.ExpandLabel(clientSecret, "quic key", EndpointType == EndpointType.Client ? sourceKey : destinationKey);
+        HKDFExtensions.ExpandLabel(clientSecret, "quic iv", EndpointType == EndpointType.Client ? sourceIv : destinationIv);
+        HKDFExtensions.ExpandLabel(clientSecret, "quic hp", EndpointType == EndpointType.Client ? sourceHp : destinationHp);
+
+        HKDFExtensions.ExpandLabel(serverSecret, "quic key", EndpointType == EndpointType.Server ? sourceKey : destinationKey);
+        HKDFExtensions.ExpandLabel(serverSecret, "quic iv", EndpointType == EndpointType.Server ? sourceIv : destinationIv);
+        HKDFExtensions.ExpandLabel(serverSecret, "quic hp", EndpointType == EndpointType.Server ? sourceHp : destinationHp);
     }
 
     public byte[] Protect(InitialPacket packet) {
@@ -107,19 +115,19 @@ public sealed class QuicPacketProtection {
 
         packet.DestinationConnectionId = new byte[Serializer.ReadByte(stream)];
 
-        stream.Read(packet.DestinationConnectionId);
+        stream.ReadExactly(packet.DestinationConnectionId);
 
         packet.SourceConnectionId = new byte[Serializer.ReadByte(stream)];
 
-        stream.Read(packet.SourceConnectionId);
+        stream.ReadExactly(packet.SourceConnectionId);
 
         packet.Token = new byte[Serializer.ReadVariableLength(stream)];
 
-        stream.Read(packet.Token);
+        stream.ReadExactly(packet.Token);
 
         Span<byte> remainder = stackalloc byte[(int)Serializer.ReadVariableLength(stream)];
 
-        stream.Read(remainder);
+        stream.ReadExactly(remainder);
 
         Span<byte> sample = remainder.Slice(4, 16);
 
@@ -152,7 +160,7 @@ public sealed class QuicPacketProtection {
         return packet;
     }
 
-    void GetNonce(ReadOnlySpan<byte> iv, uint packetNumber, Span<byte> nonce) {
+    static void GetNonce(ReadOnlySpan<byte> iv, uint packetNumber, Span<byte> nonce) {
         Span<byte> packetNumberSpan = stackalloc byte[nonce.Length];
 
         BinaryPrimitives.WriteUInt32BigEndian(packetNumberSpan[^sizeof(uint)..], packetNumber);
@@ -178,10 +186,5 @@ public sealed class QuicPacketProtection {
             packetNumberSpan[i] = (byte)(packetNumberSpan[i] ^ mask[i - start + 1]);
 
         return BinaryPrimitives.ReadUInt32BigEndian(packetNumberSpan);
-    }
-
-    public enum EndpointType {
-        Client,
-        Server
     }
 }

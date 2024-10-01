@@ -8,6 +8,15 @@ public static class Converter {
             output[i] = byte.Parse(hex.Slice(i*2, 2), System.Globalization.NumberStyles.HexNumber);
     }
 
+    public static byte[] HexToBytes(ReadOnlySpan<char> hex) {
+        byte[] array = new byte[hex.Length / 2];
+
+        for(int i = 0; i < hex.Length / 2; i++)
+            array[i] = byte.Parse(hex.Slice(i*2, 2), System.Globalization.NumberStyles.HexNumber);
+
+        return array;
+    }
+
     public static string BytesToHex(ReadOnlySpan<byte> bytes) {
         Span<char> hex = stackalloc char[bytes.Length * 2];
 
