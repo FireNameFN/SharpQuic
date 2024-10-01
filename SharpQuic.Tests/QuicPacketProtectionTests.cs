@@ -88,7 +88,7 @@ public class QuicPacketProtectionTests {
 
         destinationProtection.GenerateInitialKeys([], destinationConnectionId);
 
-        InitialPacket unprotectedPacket = destinationProtection.Unprotect(encodedPacket);
+        InitialPacket unprotectedPacket = (InitialPacket)destinationProtection.Unprotect(encodedPacket);
 
         Assert.That(unprotectedPacket.DestinationConnectionId.SequenceEqual(packet.DestinationConnectionId));
         Assert.That(unprotectedPacket.SourceConnectionId.SequenceEqual(packet.SourceConnectionId));

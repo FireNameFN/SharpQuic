@@ -8,7 +8,7 @@ using SharpQuic.Tls;
 namespace SharpQuic;
 
 public sealed class QuicConnection {
-    UdpClient client = new();
+    UdpClient client;
 
     readonly TlsClient tlsClient = new();
 
@@ -18,7 +18,8 @@ public sealed class QuicConnection {
 
     readonly PacketWriter handshakePacketWriter = new();
 
-    QuicConnection(EndpointType endpointType) {
+    QuicConnection(EndpointType endpointType, UdpClient client) {
+        this.client = client;
         protection = new(endpointType);
 
         tlsClient.InitialPacketWriter = initialPacketWriter;
@@ -26,7 +27,7 @@ public sealed class QuicConnection {
     }
 
     public static async Task<QuicConnection> ConnectAsync(IPEndPoint point) {
-        QuicConnection connection = new(EndpointType.Client);
+        QuicConnection connection = new(EndpointType.Client, new());
 
         connection.tlsClient.SendClientHello();
 
@@ -43,7 +44,7 @@ public sealed class QuicConnection {
 
         UdpReceiveResult result = await connection.client.ReceiveAsync();
 
-        packet = connection.protection.Unprotect(result.Buffer);
+        packet = (InitialPacket)connection.protection.Unprotect(result.Buffer);
 
         PacketReader reader = new() {
             stream = new MemoryStream(packet.Payload)
@@ -53,7 +54,7 @@ public sealed class QuicConnection {
 
         connection.tlsClient.ReceiveHandshake(frame.Data);
 
-        connection.tlsClient.DeriveSecrets();
+        connection.tlsClient.DeriveHandshakeSecrets();
 
         connection.protection.GenerateKeys(connection.tlsClient.clientHandshakeSecret, connection.tlsClient.serverHandshakeSecret);
 
@@ -61,13 +62,11 @@ public sealed class QuicConnection {
     }
 
     public static async Task<QuicConnection> ListenAsync(IPEndPoint point) {
-        QuicConnection connection = new(EndpointType.Server);
-
-        connection.client = new(point);
+        QuicConnection connection = new(EndpointType.Server, new(point));
 
         UdpReceiveResult result = await connection.client.ReceiveAsync();
 
-        InitialPacket packet = connection.protection.Unprotect(result.Buffer);
+        InitialPacket packet = (InitialPacket)connection.protection.Unprotect(result.Buffer);
 
         PacketReader reader = new() {
             stream = new MemoryStream(packet.Payload)
@@ -90,7 +89,7 @@ public sealed class QuicConnection {
 
         await connection.client.SendAsync(protectedPacket, result.RemoteEndPoint);
 
-        connection.tlsClient.DeriveSecrets();
+        connection.tlsClient.DeriveHandshakeSecrets();
 
         connection.protection.GenerateKeys(connection.tlsClient.clientHandshakeSecret, connection.tlsClient.serverHandshakeSecret);
 

@@ -11,16 +11,16 @@ public class TlsClientTests {
     [Test]
     public void TlsClientTest() {
         TlsClient client = new() {
-            InitialPacketWriter = new()
+            InitialPacketWriter = new(),
+            HandshakePacketWriter = new()
         };
 
         client.SendClientHello();
 
         TlsClient server = new() {
-            InitialPacketWriter = new()
+            InitialPacketWriter = new(),
+            HandshakePacketWriter = new()
         };
-
-        client.InitialPacketWriter.stream.Position = 0;
 
         PacketReader reader = new() {
             stream = new MemoryStream(client.InitialPacketWriter.stream.ToArray())
@@ -30,18 +30,28 @@ public class TlsClientTests {
 
         server.SendServerHello();
 
-        server.InitialPacketWriter.stream.Position = 0;
-
         reader.stream = new MemoryStream(server.InitialPacketWriter.stream.ToArray());
 
         client.ReceiveHandshake(reader.Read().Data);
 
         Assert.That(client.key.SequenceEqual(server.key));
 
-        client.DeriveSecrets();
-        server.DeriveSecrets();
+        client.DeriveHandshakeSecrets();
+        server.DeriveHandshakeSecrets();
 
         Assert.That(client.clientHandshakeSecret.SequenceEqual(server.clientHandshakeSecret));
         Assert.That(client.serverHandshakeSecret.SequenceEqual(server.serverHandshakeSecret));
+
+        server.SendServerHandshake();
+
+        reader.stream = new MemoryStream(server.HandshakePacketWriter.stream.ToArray());
+
+        client.ReceiveHandshake(reader.Read().Data);
+
+        client.DeriveApplicationSecrets();
+        server.DeriveApplicationSecrets();
+
+        Assert.That(client.clientApplicationSecret.SequenceEqual(server.clientApplicationSecret));
+        Assert.That(client.serverApplicationSecret.SequenceEqual(server.serverApplicationSecret));
     }
 }

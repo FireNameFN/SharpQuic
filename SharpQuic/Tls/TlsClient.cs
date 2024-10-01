@@ -21,15 +21,17 @@ public sealed class TlsClient {
 
     uint legacySessionId;
 
-    byte[] clientHello;
+    MemoryStream messages = new();
 
-    byte[] serverHello;
-
-    byte[] serverFinished;
+    byte[] hash;
 
     internal byte[] clientHandshakeSecret;
 
     internal byte[] serverHandshakeSecret;
+
+    internal byte[] clientApplicationSecret;
+
+    internal byte[] serverApplicationSecret;
 
     public TlsClient() {
         X25519KeyPairGenerator generator = new();
@@ -39,8 +41,8 @@ public sealed class TlsClient {
         keyPair = generator.GenerateKeyPair();
     }
 
-    public void DeriveSecrets() {
-        Span<byte> hash = stackalloc byte[32];
+    public void DeriveHandshakeSecrets() {
+        hash = new byte[32];
 
         HKDF.Extract(HashAlgorithmName.SHA256, [], [], hash);
 
@@ -48,13 +50,33 @@ public sealed class TlsClient {
 
         HKDF.Extract(HashAlgorithmName.SHA256, key, hash, hash);
 
+        byte[] messagesArray = messages.ToArray();
+
         clientHandshakeSecret = new byte[32];
 
-        HKDFExtensions.ExpandLabel(hash, "c hs traffic", [..clientHello, ..serverHello], clientHandshakeSecret);
+        HKDFExtensions.ExpandLabel(hash, "c hs traffic", messagesArray, clientHandshakeSecret);
 
         serverHandshakeSecret = new byte[32];
 
-        HKDFExtensions.ExpandLabel(hash, "s hs traffic", [..clientHello, ..serverHello], serverHandshakeSecret);
+        HKDFExtensions.ExpandLabel(hash, "s hs traffic", messagesArray, serverHandshakeSecret);
+    }
+
+    public void DeriveApplicationSecrets() {
+        HKDFExtensions.ExpandLabel(hash, "derived", hash);
+
+        HKDF.Extract(HashAlgorithmName.SHA256, [], hash, hash);
+
+        byte[] messagesArray = messages.ToArray();
+
+        clientApplicationSecret = new byte[32];
+
+        HKDFExtensions.ExpandLabel(hash, "c ap traffic", messagesArray, clientApplicationSecret);
+
+        serverApplicationSecret = new byte[32];
+
+        HKDFExtensions.ExpandLabel(hash, "s ap traffic", messagesArray, serverApplicationSecret);
+
+        hash = null;
     }
 
     public void SendClientHello() {
@@ -76,12 +98,12 @@ public sealed class TlsClient {
         Serializer.WriteByte(stream, 1);
         Serializer.WriteByte(stream, 0);
 
-        byte[] extensions = GetExtensions();
+        byte[] extensions = GetClientExtensions();
 
         Serializer.WriteUInt16(stream, (ushort)extensions.Length);
         stream.Write(extensions);
 
-        SendHandshake(HandshakeType.ClientHello, stream.ToArray());
+        InitialPacketWriter.WriteCrypto(GetHandshake(HandshakeType.ClientHello, stream.ToArray()));
     }
 
     public void SendServerHello() {
@@ -104,19 +126,81 @@ public sealed class TlsClient {
 
         Serializer.WriteByte(stream, 0);
 
-        byte[] extensions = GetKeyShareExtension();
+        byte[] extensions = GetServerExtensions();
 
         Serializer.WriteUInt16(stream, (ushort)extensions.Length);
         stream.Write(extensions);
 
-        SendHandshake(HandshakeType.ServerHello, stream.ToArray());
+        byte[] array = stream.ToArray();
+
+        InitialPacketWriter.WriteCrypto(GetHandshake(HandshakeType.ServerHello, array));
     }
 
-    byte[] GetExtensions() {
+    public void SendServerHandshake() {
         MemoryStream stream = new();
 
+        stream.Write(GetCertificate());
+
+        stream.Write(GetFinished());
+
+        HandshakePacketWriter.WriteCrypto(stream.ToArray());
+    }
+
+    byte[] GetCertificate() {
+        MemoryStream stream = new();
+
+        Serializer.WriteByte(stream, 0);
+
+        Serializer.WriteByte(stream, 0);
+        Serializer.WriteUInt16(stream, 0);
+
+        return GetHandshake(HandshakeType.Certificate, stream.ToArray());
+    }
+
+    byte[] GetFinished() {
+        Span<byte> key = stackalloc byte[32];
+
+        HKDFExtensions.ExpandLabel(serverHandshakeSecret, "finished", key);
+
+        Span<byte> data = stackalloc byte[32];
+
+        HMACSHA256.HashData(key, messages.ToArray(), data);
+
+        return GetHandshake(HandshakeType.Finished, data);
+    }
+
+    byte[] GetClientExtensions() {
+        MemoryStream stream = new();
+
+        stream.Write(GetSupportedVersionsExtension(EndpointType.Client));
         stream.Write(GetSupportedGroupsExtension());
         stream.Write(GetKeyShareExtension());
+
+        return stream.ToArray();
+    }
+
+    byte[] GetServerExtensions() {
+        MemoryStream stream = new();
+
+        stream.Write(GetSupportedVersionsExtension(EndpointType.Server));
+        stream.Write(GetKeyShareExtension());
+
+        return stream.ToArray();
+    }
+
+    static byte[] GetSupportedVersionsExtension(EndpointType endpointType) {
+        MemoryStream stream = new();
+
+        Serializer.WriteUInt16(stream, (ushort)ExtensionType.SupportedVersions);
+
+        if(endpointType == EndpointType.Client) {
+            Serializer.WriteUInt16(stream, 3);
+            Serializer.WriteByte(stream, sizeof(ushort));
+            Serializer.WriteUInt16(stream, 0x0304);
+        } else {
+            Serializer.WriteUInt16(stream, 2);
+            Serializer.WriteUInt16(stream, 0x0304);
+        }
 
         return stream.ToArray();
     }
@@ -151,7 +235,7 @@ public sealed class TlsClient {
         return stream.ToArray();
     }
 
-    void SendHandshake(HandshakeType type, byte[] message) {
+    byte[] GetHandshake(HandshakeType type, ReadOnlySpan<byte> message) {
         MemoryStream stream = new();
 
         Serializer.WriteByte(stream, (byte)type);
@@ -161,39 +245,34 @@ public sealed class TlsClient {
 
         stream.Write(message);
 
-        if(type is HandshakeType.ClientHello or HandshakeType.ServerHello) {
-            byte[] array = stream.ToArray();
+        byte[] array = stream.ToArray();
 
-            InitialPacketWriter.WriteCrypto(array);
+        messages.Write(array);
 
-            if(type == HandshakeType.ClientHello)
-                clientHello = array;
-            else
-                serverHello = array;
-        } else
-            HandshakePacketWriter.WriteCrypto(stream.ToArray());
+        return array;
     }
 
     public void ReceiveHandshake(byte[] array) {
         MemoryStream stream = new(array);
 
+        messages.Write(array);
+
         while(stream.Position < stream.Length) {
             HandshakeType type = (HandshakeType)Serializer.ReadByte(stream);
 
-            stream.Position += 3;
+            stream.Position++;
+
+            ushort length = Serializer.ReadUInt16(stream);
 
             switch(type) {
                 case HandshakeType.ClientHello:
                     ReceiveClientHello(stream);
-
-                    clientHello = array;
-
                     break;
                 case HandshakeType.ServerHello:
                     ReceiveServerHello(stream);
-
-                    serverHello = array;
-
+                    break;
+                default:
+                    stream.Position += length;
                     break;
             }
         }
@@ -237,7 +316,7 @@ public sealed class TlsClient {
         while(stream.Position - start < length) {
             ExtensionType type = (ExtensionType)Serializer.ReadUInt16(stream);
 
-            stream.Position += 2;
+            int extensionLength = Serializer.ReadUInt16(stream);
 
             switch(type) {
                 case ExtensionType.SupportedGroups:
@@ -245,6 +324,9 @@ public sealed class TlsClient {
                     break;
                 case ExtensionType.KeyShare:
                     keys = ReceiveKeyShareExtension(stream);
+                    break;
+                default:
+                    stream.Position += extensionLength;
                     break;
             }
         }
@@ -302,6 +384,7 @@ public sealed class TlsClient {
 
     enum ExtensionType : ushort {
         SupportedGroups = 10,
+        SupportedVersions = 43,
         KeyShare = 51
     }
 
@@ -311,6 +394,9 @@ public sealed class TlsClient {
 
     enum HandshakeType : byte {
         ClientHello = 1,
-        ServerHello = 2
+        ServerHello = 2,
+        Certificate = 11,
+        CertificateVerify = 15,
+        Finished = 20
     }
 }

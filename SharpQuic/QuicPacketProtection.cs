@@ -55,7 +55,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
         HKDFExtensions.ExpandLabel(serverSecret, "quic hp", EndpointType == EndpointType.Server ? sourceHp : destinationHp);
     }
 
-    public byte[] Protect(InitialPacket packet) {
+    public byte[] Protect(LongHeaderPacket packet) {
         Span<byte> nonce = stackalloc byte[sourceIv.Length];
 
         GetNonce(sourceIv, packet.PacketNumber, nonce);
@@ -104,12 +104,16 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
         return stream.ToArray();
     }
 
-    public InitialPacket Unprotect(byte[] packetArray) {
-        InitialPacket packet = new();
-
+    public LongHeaderPacket Unprotect(byte[] packetArray) {
         MemoryStream stream = new(packetArray);
 
         byte protectedFirstByte = Serializer.ReadByte(stream);
+
+        LongHeaderPacket packet = (protectedFirstByte & 0b11110000) switch {
+            0b11000000 => new InitialPacket(),
+            0b11110000 => new HandshakePacket(),
+            _ => throw new QuicException()
+        };
 
         stream.Position += 4;
 
@@ -121,9 +125,11 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
 
         stream.ReadExactly(packet.SourceConnectionId);
 
-        packet.Token = new byte[Serializer.ReadVariableLength(stream)];
+        if(packet is InitialPacket initialPacket) {
+            initialPacket.Token = new byte[Serializer.ReadVariableLength(stream)];
 
-        stream.ReadExactly(packet.Token);
+            stream.ReadExactly(initialPacket.Token);
+        }
 
         Span<byte> remainder = stackalloc byte[(int)Serializer.ReadVariableLength(stream)];
 
