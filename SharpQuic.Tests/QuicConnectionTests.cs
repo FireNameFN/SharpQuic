@@ -27,4 +27,9 @@ public class QuicConnectionTests {
         Assert.That(client.protection.sourceIv.SequenceEqual(server.protection.destinationIv));
         Assert.That(client.protection.sourceHp.SequenceEqual(server.protection.destinationHp));
     }
+
+    [Test, Explicit]
+    public async Task ConnectToExternalServer() {
+        await QuicConnection.ConnectAsync(IPEndPoint.Parse("127.0.0.1:50000"));
+    }
 }

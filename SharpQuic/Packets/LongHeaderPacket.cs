@@ -44,14 +44,13 @@ public class LongHeaderPacket {
 
         stream.Write(SourceConnectionId);
 
-        EncodeToken(stream);
+        if(this is InitialPacket initialPacket)
+            initialPacket.EncodeToken(stream);
 
         Serializer.WriteVariableLength(stream, (ulong)(GetPacketNumberLength() + Payload.Length + 16));
 
         return stream.ToArray();
     }
-
-    protected virtual void EncodeToken(Stream stream) { }
 
     public int GetPacketNumberLength() {
         return PacketNumberLength ?? Serializer.GetLength(PacketNumber);

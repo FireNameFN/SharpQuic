@@ -9,7 +9,7 @@ public sealed class InitialPacket : LongHeaderPacket {
         PacketType = 0b11000000;
     }
 
-    protected override void EncodeToken(Stream stream) {
+    public void EncodeToken(Stream stream) {
         Serializer.WriteVariableLength(stream, (ulong)Token.Length);
 
         stream.Write(Token);

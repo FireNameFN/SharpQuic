@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Security.Cryptography;
 using SharpQuic.Packets;
+using SharpQuic.Tls;
 
 namespace SharpQuic;
 
@@ -10,6 +11,8 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
     static readonly byte[] InitialSalt = new byte[32];
 
     public EndpointType EndpointType { get; } = endpointType;
+
+    public CipherSuite CipherSuite { get; set; } = CipherSuite.Aes128GcmSha256;
 
     internal readonly byte[] sourceKey = new byte[16];
 
@@ -64,9 +67,14 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
 
         Span<byte> tag = stackalloc byte[16];
 
-        AesGcm aesGcm = new(sourceKey, 16);
+        switch(CipherSuite) {
+            case CipherSuite.Aes128GcmSha256:
+                AesGcm aesGcm = new(sourceKey, 16);
 
-        aesGcm.Encrypt(nonce, packet.Payload, payload, tag, packet.EncodeUnprotectedHeader());
+                aesGcm.Encrypt(nonce, packet.Payload, payload, tag, packet.EncodeUnprotectedHeader());
+
+                break;
+        }
 
         int packetNumberLength = packet.GetPacketNumberLength();
 

@@ -10,27 +10,32 @@ namespace SharpQuic.Tests;
 public class TlsClientTests {
     [Test]
     public void TlsClientTest() {
+        PacketWriter clientInitialPacketWriter = new();
+        PacketWriter clientHandshakePacketWriter = new();
+        PacketWriter serverInitialPacketWriter = new();
+        PacketWriter serverHandshakePacketWriter = new();
+
         TlsClient client = new() {
-            InitialPacketWriter = new(),
-            HandshakePacketWriter = new()
+            InitialFragmentWriter = clientInitialPacketWriter,
+            HandshakeFragmentWriter = clientHandshakePacketWriter
         };
 
         client.SendClientHello();
 
         TlsClient server = new() {
-            InitialPacketWriter = new(),
-            HandshakePacketWriter = new()
+            InitialFragmentWriter = serverInitialPacketWriter,
+            HandshakeFragmentWriter = serverHandshakePacketWriter
         };
 
         PacketReader reader = new() {
-            stream = new MemoryStream(client.InitialPacketWriter.stream.ToArray())
+            stream = new MemoryStream(clientInitialPacketWriter.stream.ToArray())
         };
 
         server.ReceiveHandshake(reader.Read().Data);
 
         server.SendServerHello();
 
-        reader.stream = new MemoryStream(server.InitialPacketWriter.stream.ToArray());
+        reader.stream = new MemoryStream(serverInitialPacketWriter.stream.ToArray());
 
         client.ReceiveHandshake(reader.Read().Data);
 
@@ -44,7 +49,7 @@ public class TlsClientTests {
 
         server.SendServerHandshake();
 
-        reader.stream = new MemoryStream(server.HandshakePacketWriter.stream.ToArray());
+        reader.stream = new MemoryStream(serverHandshakePacketWriter.stream.ToArray());
 
         client.ReceiveHandshake(reader.Read().Data);
 

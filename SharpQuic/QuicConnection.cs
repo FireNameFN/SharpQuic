@@ -22,8 +22,8 @@ public sealed class QuicConnection {
         this.client = client;
         protection = new(endpointType);
 
-        tlsClient.InitialPacketWriter = initialPacketWriter;
-        tlsClient.HandshakePacketWriter = handshakePacketWriter;
+        tlsClient.InitialFragmentWriter = initialPacketWriter;
+        tlsClient.HandshakeFragmentWriter = handshakePacketWriter;
     }
 
     public static async Task<QuicConnection> ConnectAsync(IPEndPoint point) {

@@ -1,9 +1,10 @@
 using System;
 using System.IO;
+using SharpQuic.Tls;
 
 namespace SharpQuic;
 
-public sealed class PacketWriter {
+public sealed class PacketWriter : IFragmentWriter {
     internal readonly MemoryStream stream = new();
 
     public void WriteCrypto(ReadOnlySpan<byte> span) {
@@ -14,5 +15,9 @@ public sealed class PacketWriter {
         Serializer.WriteVariableLength(stream, (ulong)span.Length);
 
         stream.Write(span);
+    }
+
+    void IFragmentWriter.WriteFragment(ReadOnlySpan<byte> fragment) {
+        WriteCrypto(fragment);
     }
 }
