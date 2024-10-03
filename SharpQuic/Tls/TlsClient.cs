@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -16,7 +17,9 @@ public sealed class TlsClient {
 
     public IFragmentWriter HandshakeFragmentWriter { get; set; }
 
-    X509Certificate[] certificateChain;
+    X509Certificate2[] certificateChain;
+
+    X509Certificate2[] remoteCertificateChain;
 
     AsymmetricCipherKeyPair keyPair;
 
@@ -36,7 +39,7 @@ public sealed class TlsClient {
 
     internal byte[] serverApplicationSecret;
 
-    public TlsClient(X509Certificate[] certificateChain = null) {
+    public TlsClient(X509Certificate2[] certificateChain = null) {
         this.certificateChain = certificateChain ?? [];
 
         X25519KeyPairGenerator generator = new();
@@ -109,10 +112,20 @@ public sealed class TlsClient {
         MemoryStream stream = new();
 
         CertificateMessage certificateMessage = new() {
-            CertificateChain = [..certificateChain]
+            CertificateChain = certificateChain
         };
 
         stream.Write(GetHandshake(certificateMessage));
+
+        if(certificateChain.Length > 0) {
+            CertificateVerifyMessage certificateVerifyMessage = new() {
+                EndpointType = EndpointType.Server,
+                Messages = messages.ToArray(),
+                Certificate = certificateChain[0]
+            };
+
+            stream.Write(GetHandshake(certificateVerifyMessage));
+        }
 
         FinishedMessage finishedMessage = new() {
             Messages = messages.ToArray(),
@@ -150,14 +163,18 @@ public sealed class TlsClient {
     public void ReceiveHandshake(byte[] array) {
         MemoryStream stream = new(array);
 
-        messages.Write(array);
-
         while(stream.Position < stream.Length) {
             HandshakeType type = (HandshakeType)Serializer.ReadByte(stream);
 
             stream.Position++;
 
             ushort length = Serializer.ReadUInt16(stream);
+
+            byte[] message = new byte[length];
+
+            stream.ReadExactly(message);
+
+            stream.Position -= length;
 
             switch(type) {
                 case HandshakeType.ClientHello:
@@ -166,10 +183,22 @@ public sealed class TlsClient {
                 case HandshakeType.ServerHello:
                     ReceiveServerHello(ServerHelloMessage.Decode(stream));
                     break;
+                case HandshakeType.Certificate:
+                    ReceiveCertificate(CertificateMessage.Decode(stream));
+                    break;
+                case HandshakeType.CertificateVerify:
+                    ReceiveCertificateVerify(CertificateVerifyMessage.Decode(stream));
+                    break;
                 default:
                     stream.Position += length;
                     break;
             }
+
+            Serializer.WriteByte(messages, (byte)type);
+            Serializer.WriteByte(messages, 0);
+            Serializer.WriteUInt16(messages, length);
+
+            messages.Write(message);
         }
     }
 
@@ -181,6 +210,15 @@ public sealed class TlsClient {
 
     void ReceiveServerHello(ServerHelloMessage message) {
         DeriveKey(message.KeyShare);
+    }
+
+    void ReceiveCertificate(CertificateMessage message) {
+        remoteCertificateChain = message.CertificateChain;
+    }
+
+    void ReceiveCertificateVerify(CertificateVerifyMessage message) {
+        if(!CertificateVerifyMessage.Verify(EndpointType.Server, remoteCertificateChain[0], message.Signature, messages.ToArray()))
+            throw new QuicException();
     }
 
     void DeriveKey(KeyShareExtension.KeyShareEntry[] keyShare) {

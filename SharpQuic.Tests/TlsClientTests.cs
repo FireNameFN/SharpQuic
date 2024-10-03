@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using NUnit.Framework;
 using SharpQuic.Tls;
 
@@ -10,6 +12,10 @@ namespace SharpQuic.Tests;
 public class TlsClientTests {
     [Test]
     public void TlsClientTest() {
+        CertificateRequest request = new("cn=TlsClientTest CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        
+        X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
+
         PacketWriter clientInitialPacketWriter = new();
         PacketWriter clientHandshakePacketWriter = new();
         PacketWriter serverInitialPacketWriter = new();
@@ -22,7 +28,7 @@ public class TlsClientTests {
 
         client.SendClientHello();
 
-        TlsClient server = new() {
+        TlsClient server = new([certificate]) {
             InitialFragmentWriter = serverInitialPacketWriter,
             HandshakeFragmentWriter = serverHandshakePacketWriter
         };

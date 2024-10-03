@@ -61,6 +61,7 @@ public sealed class ClientHelloMessage : IMessage {
         MemoryStream stream = new();
 
         SupportedVersionsExtension.EncodeClient(stream);
+        SignatureAlgorithmsExtension.Encode(stream);
         SupportedGroupsExtension.Encode(stream);
         KeyShareExtension.EncodeClient(stream, KeyShare);
 

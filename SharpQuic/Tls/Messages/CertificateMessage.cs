@@ -7,14 +7,14 @@ namespace SharpQuic.Tls.Messages;
 public sealed class CertificateMessage : IMessage {
     public HandshakeType Type { get; } = HandshakeType.Certificate;
 
-    public X509Certificate[] CertificateChain { get; set; }
+    public X509Certificate2[] CertificateChain { get; set; }
 
     public void Encode(Stream stream) {
         Serializer.WriteByte(stream, 0);
 
         MemoryStream certificateStream = new();
 
-        foreach(X509Certificate certificate in CertificateChain) {
+        foreach(X509Certificate2 certificate in CertificateChain) {
             byte[] data = certificate.GetRawCertData();
 
             Serializer.WriteByte(certificateStream, 0);
@@ -24,6 +24,8 @@ public sealed class CertificateMessage : IMessage {
 
             Serializer.WriteUInt16(certificateStream, 0);
         }
+
+        certificateStream.Position = 0;
 
         Serializer.WriteByte(stream, 0);
         Serializer.WriteUInt16(stream, (ushort)certificateStream.Length);
@@ -37,7 +39,7 @@ public sealed class CertificateMessage : IMessage {
         stream.Position++;
         length = Serializer.ReadUInt16(stream);
 
-        List<X509Certificate> certificateChain = [];
+        List<X509Certificate2> certificateChain = [];
 
         long start = stream.Position;
 
