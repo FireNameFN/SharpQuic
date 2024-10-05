@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Security.Cryptography;
+using SharpQuic.Tls.Enums;
 using SharpQuic.Tls.Extensions;
 
 namespace SharpQuic.Tls.Messages;
@@ -10,7 +11,11 @@ public sealed class ClientHelloMessage : IMessage {
 
     public KeyShareExtension.KeyShareEntry[] KeyShare { get; set; }
 
+    public string[] Protocols { get; set; }
+
     public byte[] LegacySessionId { get; set; }
+
+    public QuicTransportParameters Parameters { get; set; }
 
     public void Encode(Stream stream) {
         Serializer.WriteUInt16(stream, 0x0303);
@@ -47,8 +52,13 @@ public sealed class ClientHelloMessage : IMessage {
 
         stream.Read(message.LegacySessionId);
 
-        length = Serializer.ReadUInt16(stream);
-        stream.Position += length;
+        length = Serializer.ReadUInt16(stream) / 2;
+        //stream.Position += length;
+
+        CipherSuite[] cipherSuites = new CipherSuite[length];
+
+        for(int i = 0; i < length; i++)
+            cipherSuites[i] = (CipherSuite)Serializer.ReadUInt16(stream);
 
         stream.Position += 2;
 
@@ -64,6 +74,8 @@ public sealed class ClientHelloMessage : IMessage {
         SignatureAlgorithmsExtension.Encode(stream);
         SupportedGroupsExtension.Encode(stream);
         KeyShareExtension.EncodeClient(stream, KeyShare);
+        AlpnExtension.Encode(stream, Protocols);
+        QuicTransportParametersExtension.Encode(stream, Parameters);
 
         return stream.ToArray();
     }

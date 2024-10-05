@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Security.Cryptography;
+using SharpQuic.Tls.Enums;
 using SharpQuic.Tls.Extensions;
 
 namespace SharpQuic.Tls.Messages;

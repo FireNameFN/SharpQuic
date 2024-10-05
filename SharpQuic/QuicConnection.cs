@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using SharpQuic.Packets;
 using SharpQuic.Tls;
@@ -8,9 +9,9 @@ using SharpQuic.Tls;
 namespace SharpQuic;
 
 public sealed class QuicConnection {
-    UdpClient client;
+    readonly UdpClient client;
 
-    readonly TlsClient tlsClient = new();
+    readonly TlsClient tlsClient;
 
     internal readonly QuicPacketProtection protection;
 
@@ -18,22 +19,33 @@ public sealed class QuicConnection {
 
     readonly PacketWriter handshakePacketWriter = new();
 
-    QuicConnection(EndpointType endpointType, UdpClient client) {
+    readonly byte[] sourceConnectionId;
+
+    QuicConnection(EndpointType endpointType, UdpClient client, QuicTransportParameters parameters, string[] protocols, X509Certificate2[] certificateChain = null) {
         this.client = client;
         protection = new(endpointType);
+        sourceConnectionId = parameters.InitialSourceConnectionId;
 
-        tlsClient.InitialFragmentWriter = initialPacketWriter;
-        tlsClient.HandshakeFragmentWriter = handshakePacketWriter;
+        tlsClient = new(parameters, protocols, certificateChain) {
+            InitialFragmentWriter = initialPacketWriter,
+            HandshakeFragmentWriter = handshakePacketWriter
+        };
     }
 
-    public static async Task<QuicConnection> ConnectAsync(IPEndPoint point) {
-        QuicConnection connection = new(EndpointType.Client, new());
+    public static async Task<QuicConnection> ConnectAsync(IPEndPoint point, string[] protocols) {
+        QuicTransportParameters parameters = new() {
+            InitialSourceConnectionId = new byte[8]
+        };
+
+        QuicConnection connection = new(EndpointType.Client, new(), parameters, protocols);
 
         connection.tlsClient.SendClientHello();
 
+        connection.initialPacketWriter.WritePaddingUntil1200();
+
         InitialPacket packet = new() {
             DestinationConnectionId = [],
-            SourceConnectionId = [],
+            SourceConnectionId = connection.sourceConnectionId,
             Token = [],
             Payload = connection.initialPacketWriter.stream.ToArray()
         };
@@ -44,13 +56,19 @@ public sealed class QuicConnection {
 
         UdpReceiveResult result = await connection.client.ReceiveAsync();
 
-        packet = (InitialPacket)connection.protection.Unprotect(result.Buffer);
+        MemoryStream stream = new(result.Buffer);
+
+        packet = (InitialPacket)connection.protection.Unprotect(stream);
 
         PacketReader reader = new() {
             stream = new MemoryStream(packet.Payload)
         };
 
-        Frame frame = reader.Read();
+        Frame frame;
+
+        do {
+            frame = reader.Read();
+        } while(frame.Type != FrameType.Crypto);
 
         connection.tlsClient.ReceiveHandshake(frame.Data);
 
@@ -61,12 +79,18 @@ public sealed class QuicConnection {
         return connection;
     }
 
-    public static async Task<QuicConnection> ListenAsync(IPEndPoint point) {
-        QuicConnection connection = new(EndpointType.Server, new(point));
+    public static async Task<QuicConnection> ListenAsync(IPEndPoint point, string[] protocols) {
+        QuicTransportParameters parameters = new() {
+            InitialSourceConnectionId = new byte[8]
+        };
+
+        QuicConnection connection = new(EndpointType.Server, new(point), parameters, protocols);
 
         UdpReceiveResult result = await connection.client.ReceiveAsync();
 
-        InitialPacket packet = (InitialPacket)connection.protection.Unprotect(result.Buffer);
+        MemoryStream stream = new(result.Buffer);
+
+        InitialPacket packet = (InitialPacket)connection.protection.Unprotect(stream);
 
         PacketReader reader = new() {
             stream = new MemoryStream(packet.Payload)
@@ -79,8 +103,8 @@ public sealed class QuicConnection {
         connection.tlsClient.SendServerHello();
 
         packet = new() {
-            DestinationConnectionId = [],
-            SourceConnectionId = [],
+            DestinationConnectionId = packet.SourceConnectionId,
+            SourceConnectionId = packet.DestinationConnectionId,
             Token = [],
             Payload = connection.initialPacketWriter.stream.ToArray()
         };
@@ -92,6 +116,45 @@ public sealed class QuicConnection {
         connection.tlsClient.DeriveHandshakeSecrets();
 
         connection.protection.GenerateKeys(connection.tlsClient.clientHandshakeSecret, connection.tlsClient.serverHandshakeSecret);
+
+        /*connection.tlsClient.SendServerHandshake();
+
+        packet = new() {
+            DestinationConnectionId = packet.SourceConnectionId,
+            SourceConnectionId = packet.DestinationConnectionId,
+            Token = [],
+            Payload = connection.handshakePacketWriter.stream.ToArray()
+        };
+
+        protectedPacket = connection.protection.Protect(packet);
+
+        await connection.client.SendAsync(protectedPacket, result.RemoteEndPoint);
+
+        result = await connection.client.ReceiveAsync();
+
+        stream = new(result.Buffer);
+
+        connection.protection.Unprotect(stream);
+
+        result = await connection.client.ReceiveAsync();
+
+        stream = new(result.Buffer);
+
+        HandshakePacket handshakePacket = (HandshakePacket)connection.protection.Unprotect(stream);
+
+        reader = new() {
+            stream = new MemoryStream(handshakePacket.Payload)
+        };
+
+        do {
+            frame = reader.Read();
+        } while(frame.Type != FrameType.Crypto);
+
+        connection.tlsClient.ReceiveHandshake(frame.Data);
+
+        connection.tlsClient.DeriveApplicationSecrets();
+
+        connection.protection.GenerateKeys(connection.tlsClient.clientApplicationSecret, connection.tlsClient.serverApplicationSecret);*/
 
         return connection;
     }

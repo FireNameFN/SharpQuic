@@ -1,4 +1,5 @@
 using System.IO;
+using SharpQuic.Tls.Enums;
 
 namespace SharpQuic.Tls.Extensions;
 

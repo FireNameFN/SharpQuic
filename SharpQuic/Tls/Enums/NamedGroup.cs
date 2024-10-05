@@ -1,4 +1,4 @@
-namespace SharpQuic.Tls;
+namespace SharpQuic.Tls.Enums;
 
 public enum NamedGroup : ushort {
     SecP521r1 = 0x0019,

@@ -4,15 +4,18 @@ using System.IO;
 using System.Security.Cryptography;
 using SharpQuic.Packets;
 using SharpQuic.Tls;
+using SharpQuic.Tls.Enums;
 
 namespace SharpQuic;
 
 public sealed class QuicPacketProtection(EndpointType endpointType) {
-    static readonly byte[] InitialSalt = new byte[32];
+    static readonly byte[] InitialSalt = Converter.HexToBytes("38762cf7f55934b34d179ae6a4c80cadccbb7f0a");
 
     public EndpointType EndpointType { get; } = endpointType;
 
     public CipherSuite CipherSuite { get; set; } = CipherSuite.Aes128GcmSha256;
+
+    bool initialKeysGenerated;
 
     internal readonly byte[] sourceKey = new byte[16];
 
@@ -26,28 +29,6 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
 
     internal readonly byte[] destinationHp = new byte[16];
 
-    static QuicPacketProtection() {
-        Converter.HexToBytes("38762cf7f55934b34d179ae6a4c80cadccbb7f0a", InitialSalt);
-    }
-
-    public void GenerateInitialKeys(byte[] sourceConnectionId, byte[] destinationConnectionId) {
-        Span<byte> initialSecret = stackalloc byte[32];
-
-        HKDF.Extract(HashAlgorithmName.SHA256, destinationConnectionId, InitialSalt, initialSecret);
-
-        Span<byte> clientInitialSecret = stackalloc byte[32];
-
-        HKDFExtensions.ExpandLabel(initialSecret, "client in", clientInitialSecret);
-
-        HKDF.Extract(HashAlgorithmName.SHA256, sourceConnectionId, InitialSalt, initialSecret);
-
-        Span<byte> serverInitialSecret = stackalloc byte[32];
-
-        HKDFExtensions.ExpandLabel(initialSecret, "server in", serverInitialSecret);
-
-        GenerateKeys(clientInitialSecret, serverInitialSecret);
-    }
-
     public void GenerateKeys(ReadOnlySpan<byte> clientSecret, ReadOnlySpan<byte> serverSecret) {
         HKDFExtensions.ExpandLabel(clientSecret, "quic key", EndpointType == EndpointType.Client ? sourceKey : destinationKey);
         HKDFExtensions.ExpandLabel(clientSecret, "quic iv", EndpointType == EndpointType.Client ? sourceIv : destinationIv);
@@ -58,7 +39,28 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
         HKDFExtensions.ExpandLabel(serverSecret, "quic hp", EndpointType == EndpointType.Server ? sourceHp : destinationHp);
     }
 
+    void GenerateInitialKeys(byte[] clientDestinationConnectionId) {
+        Span<byte> initialSecret = stackalloc byte[32];
+
+        HKDF.Extract(HashAlgorithmName.SHA256, clientDestinationConnectionId, InitialSalt, initialSecret);
+
+        Span<byte> clientInitialSecret = stackalloc byte[32];
+
+        HKDFExtensions.ExpandLabel(initialSecret, "client in", clientInitialSecret);
+
+        Span<byte> serverInitialSecret = stackalloc byte[32];
+
+        HKDFExtensions.ExpandLabel(initialSecret, "server in", serverInitialSecret);
+
+        GenerateKeys(clientInitialSecret, serverInitialSecret);
+
+        initialKeysGenerated = true;
+    }
+
     public byte[] Protect(LongHeaderPacket packet) {
+        if(!initialKeysGenerated && packet is InitialPacket)
+            GenerateInitialKeys(packet.DestinationConnectionId);
+
         Span<byte> nonce = stackalloc byte[sourceIv.Length];
 
         GetNonce(sourceIv, packet.PacketNumber, nonce);
@@ -69,9 +71,8 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
 
         switch(CipherSuite) {
             case CipherSuite.Aes128GcmSha256:
-                AesGcm aesGcm = new(sourceKey, 16);
-
-                aesGcm.Encrypt(nonce, packet.Payload, payload, tag, packet.EncodeUnprotectedHeader());
+                using(AesGcm aesGcm = new(sourceKey, 16))
+                    aesGcm.Encrypt(nonce, packet.Payload, payload, tag, packet.EncodeUnprotectedHeader());
 
                 break;
         }
@@ -112,9 +113,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
         return stream.ToArray();
     }
 
-    public LongHeaderPacket Unprotect(byte[] packetArray) {
-        MemoryStream stream = new(packetArray);
-
+    public LongHeaderPacket Unprotect(Stream stream) {
         byte protectedFirstByte = Serializer.ReadByte(stream);
 
         LongHeaderPacket packet = (protectedFirstByte & 0b11110000) switch {
@@ -134,12 +133,19 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
         stream.ReadExactly(packet.SourceConnectionId);
 
         if(packet is InitialPacket initialPacket) {
-            initialPacket.Token = new byte[Serializer.ReadVariableLength(stream)];
+            (ulong tokenLength, initialPacket.TokenLengthLength) = Serializer.ReadVariableLength(stream);
+            
+            initialPacket.Token = new byte[tokenLength];
 
             stream.ReadExactly(initialPacket.Token);
+
+            if(EndpointType == EndpointType.Server)
+                GenerateInitialKeys(packet.DestinationConnectionId);
         }
 
-        Span<byte> remainder = stackalloc byte[(int)Serializer.ReadVariableLength(stream)];
+        (ulong length, packet.LengthLength) = Serializer.ReadVariableLength(stream);
+
+        Span<byte> remainder = stackalloc byte[(int)length];
 
         stream.ReadExactly(remainder);
 
@@ -149,7 +155,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
 
         GetMask(destinationHp, sample, mask);
 
-        int packetNumberLength = ((protectedFirstByte ^ mask[0]) & 0b00111111) + 1;
+        int packetNumberLength = ((protectedFirstByte ^ mask[0]) & 0b11) + 1;
 
         Span<byte> packetNumberSpan = stackalloc byte[sizeof(uint)];
 
@@ -167,7 +173,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
 
         packet.Payload = new byte[payload.Length];
 
-        AesGcm aesGcm = new(destinationKey, 16);
+        using AesGcm aesGcm = new(destinationKey, 16);
 
         aesGcm.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
 
@@ -184,7 +190,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
     }
 
     static void GetMask(byte[] hp, ReadOnlySpan<byte> sample, Span<byte> mask) {
-        Aes aes = Aes.Create();
+        using Aes aes = Aes.Create();
 
         aes.Key = hp;
 

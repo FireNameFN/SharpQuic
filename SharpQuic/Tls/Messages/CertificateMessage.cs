@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography.X509Certificates;
+using SharpQuic.Tls.Enums;
 
 namespace SharpQuic.Tls.Messages;
 

@@ -17,6 +17,12 @@ public sealed class PacketWriter : IFragmentWriter {
         stream.Write(span);
     }
 
+    public void WritePaddingUntil1200() {
+        Span<byte> padding = stackalloc byte[1200 - (int)stream.Position];
+        
+        stream.Write(padding);
+    }
+
     void IFragmentWriter.WriteFragment(ReadOnlySpan<byte> fragment) {
         WriteCrypto(fragment);
     }

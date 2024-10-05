@@ -1,4 +1,4 @@
-namespace SharpQuic.Tls;
+namespace SharpQuic.Tls.Enums;
 
 public enum CipherSuite : ushort {
     Aes128GcmSha256 = 0x1301,

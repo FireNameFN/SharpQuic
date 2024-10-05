@@ -7,6 +7,7 @@ using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Agreement;
 using Org.BouncyCastle.Crypto.Generators;
 using Org.BouncyCastle.Crypto.Parameters;
+using SharpQuic.Tls.Enums;
 using SharpQuic.Tls.Extensions;
 using SharpQuic.Tls.Messages;
 
@@ -16,6 +17,10 @@ public sealed class TlsClient {
     public IFragmentWriter InitialFragmentWriter { get; set; }
 
     public IFragmentWriter HandshakeFragmentWriter { get; set; }
+
+    readonly QuicTransportParameters parameters;
+
+    string[] protocols;
 
     X509Certificate2[] certificateChain;
 
@@ -39,7 +44,9 @@ public sealed class TlsClient {
 
     internal byte[] serverApplicationSecret;
 
-    public TlsClient(X509Certificate2[] certificateChain = null) {
+    public TlsClient(QuicTransportParameters parameters, string[] protocols, X509Certificate2[] certificateChain = null) {
+        this.parameters = parameters;
+        this.protocols = protocols;
         this.certificateChain = certificateChain ?? [];
 
         X25519KeyPairGenerator generator = new();
@@ -58,7 +65,7 @@ public sealed class TlsClient {
 
         HKDF.Extract(HashAlgorithmName.SHA256, key, hash, hash);
 
-        byte[] messagesArray = messages.ToArray();
+        byte[] messagesArray = SHA256.HashData(messages.ToArray());
 
         clientHandshakeSecret = new byte[32];
 
@@ -77,7 +84,7 @@ public sealed class TlsClient {
 
         HKDF.Extract(HashAlgorithmName.SHA256, [], hash, hash);
 
-        byte[] messagesArray = messages.ToArray();
+        byte[] messagesArray = SHA256.HashData(messages.ToArray());
 
         clientApplicationSecret = new byte[32];
 
@@ -92,16 +99,26 @@ public sealed class TlsClient {
     }
 
     public void SendClientHello() {
+        byte[] key = new byte[32];
+
+        ((X25519PublicKeyParameters)keyPair.Public).Encode(key);
+
         ClientHelloMessage message = new() {
-            KeyShare = [new(NamedGroup.X25519, (X25519PublicKeyParameters)keyPair.Public)]
+            KeyShare = [new(NamedGroup.X25519, key)],
+            Protocols = protocols,
+            Parameters = parameters
         };
 
         InitialFragmentWriter.WriteFragment(GetHandshake(message));
     }
 
     public void SendServerHello() {
+        byte[] key = new byte[32];
+
+        ((X25519PublicKeyParameters)keyPair.Public).Encode(key);
+
         ServerHelloMessage message = new() {
-            KeyShare = [new(NamedGroup.X25519, (X25519PublicKeyParameters)keyPair.Public)],
+            KeyShare = [new(NamedGroup.X25519, key)],
             LegacySessionId = legacySessionId
         };
 
@@ -111,6 +128,12 @@ public sealed class TlsClient {
     public void SendServerHandshake() {
         MemoryStream stream = new();
 
+        EncryptedExtensionsMessage encryptedExtensionsMessage = new() {
+            Protocol = protocols[0]
+        };
+
+        stream.Write(GetHandshake(encryptedExtensionsMessage));
+
         CertificateMessage certificateMessage = new() {
             CertificateChain = certificateChain
         };
@@ -118,11 +141,7 @@ public sealed class TlsClient {
         stream.Write(GetHandshake(certificateMessage));
 
         if(certificateChain.Length > 0) {
-            CertificateVerifyMessage certificateVerifyMessage = new() {
-                EndpointType = EndpointType.Server,
-                Messages = messages.ToArray(),
-                Certificate = certificateChain[0]
-            };
+            CertificateVerifyMessage certificateVerifyMessage = CertificateVerifyMessage.Create(EndpointType.Server, messages.ToArray(), certificateChain[0]);
 
             stream.Write(GetHandshake(certificateVerifyMessage));
         }
@@ -222,7 +241,7 @@ public sealed class TlsClient {
     }
 
     void DeriveKey(KeyShareExtension.KeyShareEntry[] keyShare) {
-        X25519PublicKeyParameters key = keyShare.First(key => key.NamedGroup == NamedGroup.X25519).KeyParameters;
+        X25519PublicKeyParameters key = new(keyShare.First(key => key.NamedGroup == NamedGroup.X25519).Key);
 
         X25519Agreement agreement = new();
 

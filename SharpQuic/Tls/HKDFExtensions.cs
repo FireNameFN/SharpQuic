@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace SharpQuic;
+namespace SharpQuic.Tls;
 
 public static class HKDFExtensions {
     static readonly byte[] TlsLabel = Encoding.ASCII.GetBytes("tls13 ");

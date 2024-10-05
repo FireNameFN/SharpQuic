@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using NUnit.Framework;
 using SharpQuic.Packets;
@@ -37,8 +38,6 @@ public class QuicPacketProtectionTests {
         Assert.That(header.Equals("c300000001088394c8f03e5157080000449e00000002", StringComparison.CurrentCultureIgnoreCase));
 
         QuicPacketProtection protection = new(EndpointType.Client);
-
-        protection.GenerateInitialKeys([], destinationConnectionId);
 
         byte[] encodedPacket = protection.Protect(packet);
 
@@ -86,9 +85,9 @@ public class QuicPacketProtectionTests {
 
         QuicPacketProtection destinationProtection = new(EndpointType.Server);
 
-        destinationProtection.GenerateInitialKeys([], destinationConnectionId);
+        MemoryStream stream = new(encodedPacket);
 
-        InitialPacket unprotectedPacket = (InitialPacket)destinationProtection.Unprotect(encodedPacket);
+        InitialPacket unprotectedPacket = (InitialPacket)destinationProtection.Unprotect(stream);
 
         Assert.That(unprotectedPacket.DestinationConnectionId.SequenceEqual(packet.DestinationConnectionId));
         Assert.That(unprotectedPacket.SourceConnectionId.SequenceEqual(packet.SourceConnectionId));

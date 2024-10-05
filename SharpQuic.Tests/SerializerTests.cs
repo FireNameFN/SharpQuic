@@ -35,7 +35,7 @@ public class SerializerTests {
 
         stream.Position = 0;
 
-        ulong value = Serializer.ReadVariableLength(stream);
+        ulong value = Serializer.ReadVariableLength(stream).Value;
 
         Assert.That(value == 5);
     }
@@ -48,7 +48,7 @@ public class SerializerTests {
 
         stream.Position = 0;
 
-        ulong value = Serializer.ReadVariableLength(stream);
+        ulong value = Serializer.ReadVariableLength(stream).Value;
 
         Assert.That(value == 300);
     }

@@ -14,12 +14,12 @@ public class QuicConnectionTests {
         TaskCompletionSource source = new();
 
         _ = Task.Run(async () => {
-            client = await QuicConnection.ConnectAsync(IPEndPoint.Parse("127.0.0.1:50000"));
+            client = await QuicConnection.ConnectAsync(IPEndPoint.Parse("127.0.0.1:50000"), ["test"]);
 
             source.SetResult();
         });
 
-        QuicConnection server = await QuicConnection.ListenAsync(IPEndPoint.Parse("127.0.0.1:50000"));
+        QuicConnection server = await QuicConnection.ListenAsync(IPEndPoint.Parse("0.0.0.0:50000"), ["test"]);
 
         await source.Task;
 
@@ -30,6 +30,11 @@ public class QuicConnectionTests {
 
     [Test, Explicit]
     public async Task ConnectToExternalServer() {
-        await QuicConnection.ConnectAsync(IPEndPoint.Parse("127.0.0.1:50000"));
+        await QuicConnection.ConnectAsync(IPEndPoint.Parse("127.0.0.1:853"), ["doq"]);
+    }
+
+    [Test, Explicit]
+    public async Task ListenExternalClient() {
+        await QuicConnection.ListenAsync(IPEndPoint.Parse("127.0.0.1:50000"), ["test"]);
     }
 }

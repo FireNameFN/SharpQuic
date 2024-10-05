@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.IO;
+using System.Security.Cryptography;
 
 namespace SharpQuic;
 
@@ -33,14 +34,25 @@ public static class Serializer {
         stream.Write(span[^length..]);
     }
 
-    public static void WriteVariableLength(Stream stream, ulong value) {
-        (int bits, int length) = value switch {
-            < 1 << 6 => (0b00 << 6, 1),
-            < 1 << 14 => (0b01 << 6, 2),
-            < 1 << 30 => (0b10 << 6, 4),
-            < 1ul << 62 => (0b11 << 6, 8),
-            _ => throw new ArgumentOutOfRangeException(nameof(value))
-        };
+    public static void WriteVariableLength(Stream stream, ulong value, int length = 0) {
+        int bits;
+
+        if(length < 1)
+            (bits, length) = value switch {
+                < 1 << 6 => (0b00 << 6, 1),
+                < 1 << 14 => (0b01 << 6, 2),
+                < 1 << 30 => (0b10 << 6, 4),
+                < 1ul << 62 => (0b11 << 6, 8),
+                _ => throw new ArgumentOutOfRangeException(nameof(value))
+            };
+        else
+            bits = length switch {
+                1 => 0b00 << 6,
+                2 => 0b01 << 6,
+                3 => 0b10 << 6,
+                4 => 0b11 << 6,
+                _ => throw new ArgumentOutOfRangeException(nameof(length))
+            };
 
         Span<byte> span = stackalloc byte[sizeof(ulong)];
 
@@ -83,7 +95,7 @@ public static class Serializer {
         return BinaryPrimitives.ReadUInt32BigEndian(span);
     }
 
-    public static ulong ReadVariableLength(Stream stream) {
+    public static (ulong Value, int Length) ReadVariableLength(Stream stream) {
         Span<byte> span = stackalloc byte[sizeof(ulong) + 7];
 
         stream.ReadExactly(span.Slice(7, 1));
@@ -100,7 +112,7 @@ public static class Serializer {
         if(length > 0)
             stream.ReadExactly(span.Slice(8, length));
 
-        return BinaryPrimitives.ReadUInt64BigEndian(span.Slice(length, 8));
+        return (BinaryPrimitives.ReadUInt64BigEndian(span.Slice(length, 8)), length + 1);
     }
 
     public static int GetLength(uint value) {

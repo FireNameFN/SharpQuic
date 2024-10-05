@@ -1,6 +1,5 @@
-using System;
 using System.IO;
-using Org.BouncyCastle.Crypto.Parameters;
+using SharpQuic.Tls.Enums;
 
 namespace SharpQuic.Tls.Extensions;
 
@@ -29,11 +28,7 @@ public static class KeyShareExtension {
 
         Serializer.WriteUInt16(stream, 32);
 
-        Span<byte> key = stackalloc byte[32];
-
-        entry.KeyParameters.Encode(key);
-
-        stream.Write(key);
+        stream.Write(entry.Key);
     }
 
     public static KeyShareEntry[] DecodeClient(Stream stream) {
@@ -50,14 +45,14 @@ public static class KeyShareExtension {
     public static KeyShareEntry DecodeServer(Stream stream) {
         NamedGroup namedGroup = (NamedGroup)Serializer.ReadUInt16(stream);
 
-        stream.Position += 2;
+        int length = Serializer.ReadUInt16(stream);
 
-        Span<byte> key = stackalloc byte[32];
+        byte[] key = new byte[length];
 
         stream.ReadExactly(key);
 
-        return new(namedGroup, new(key));
+        return new(namedGroup, key);
     }
 
-    public readonly record struct KeyShareEntry(NamedGroup NamedGroup, X25519PublicKeyParameters KeyParameters);
+    public readonly record struct KeyShareEntry(NamedGroup NamedGroup, byte[] Key);
 }

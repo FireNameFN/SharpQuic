@@ -3,6 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using SharpQuic.Tls.Enums;
 
 namespace SharpQuic.Tls.Messages;
 
@@ -12,12 +13,6 @@ public sealed class CertificateVerifyMessage : IMessage {
     static readonly byte[] ServerSignatureStart;
 
     public HandshakeType Type { get; } = HandshakeType.CertificateVerify;
-
-    public EndpointType EndpointType { get; set; }
-
-    public byte[] Messages { get; set; }
-
-    public X509Certificate2 Certificate { get; set; }
 
     public byte[] Signature { get; set; }
 
@@ -43,21 +38,27 @@ public sealed class CertificateVerifyMessage : IMessage {
         ServerSignatureStart = [..repeations, ..context, 0];
     }
 
-    public void Encode(Stream stream) {
-        Serializer.WriteUInt16(stream, (ushort)SignatureScheme.RSAPkcs1SHA256);
-
-        byte[] signature = GetSignature(EndpointType, Messages);
+    public static CertificateVerifyMessage Create(EndpointType endpointType, byte[] messages, X509Certificate2 certificate) {
+        byte[] signature = GetSignature(endpointType, messages);
 
         using RSA rsa = RSA.Create();
 
-        RSAPKCS1SignatureFormatter formatter = new(Certificate.GetRSAPrivateKey());
+        RSAPKCS1SignatureFormatter formatter = new(certificate.GetRSAPrivateKey());
 
         formatter.SetHashAlgorithm("SHA256");
 
         signature = formatter.CreateSignature(signature);
 
-        Serializer.WriteUInt16(stream, (ushort)signature.Length);
-        stream.Write(signature);
+        return new() {
+            Signature = signature
+        };
+    }
+
+    public void Encode(Stream stream) {
+        Serializer.WriteUInt16(stream, (ushort)SignatureScheme.RSAPkcs1SHA256);
+
+        Serializer.WriteUInt16(stream, (ushort)Signature.Length);
+        stream.Write(Signature);
     }
 
     public static CertificateVerifyMessage Decode(Stream stream) {

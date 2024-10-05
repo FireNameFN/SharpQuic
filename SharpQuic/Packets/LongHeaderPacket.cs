@@ -13,6 +13,8 @@ public class LongHeaderPacket {
 
     public uint PacketNumber { get; set; }
 
+    public int? LengthLength { get; set; }
+
     public byte[] Payload { get; set; }
 
     public byte[] EncodeUnprotectedHeader() {
@@ -47,7 +49,7 @@ public class LongHeaderPacket {
         if(this is InitialPacket initialPacket)
             initialPacket.EncodeToken(stream);
 
-        Serializer.WriteVariableLength(stream, (ulong)(GetPacketNumberLength() + Payload.Length + 16));
+        Serializer.WriteVariableLength(stream, (ulong)(GetPacketNumberLength() + Payload.Length + 16), LengthLength ?? 0);
 
         return stream.ToArray();
     }
