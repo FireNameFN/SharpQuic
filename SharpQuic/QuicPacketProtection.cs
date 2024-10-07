@@ -13,7 +13,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
 
     public EndpointType EndpointType { get; } = endpointType;
 
-    public CipherSuite CipherSuite { get; set; } = CipherSuite.Aes128GcmSha256;
+    public CipherSuite CipherSuite { get; set; } = CipherSuite.Aes128GcmSHA256;
 
     bool initialKeysGenerated;
 
@@ -70,7 +70,8 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
         Span<byte> tag = stackalloc byte[16];
 
         switch(CipherSuite) {
-            case CipherSuite.Aes128GcmSha256:
+            case CipherSuite.Aes128GcmSHA256:
+            case CipherSuite.Aes256GcmSHA384:
                 using(AesGcm aesGcm = new(sourceKey, 16))
                     aesGcm.Encrypt(nonce, packet.Payload, payload, tag, packet.EncodeUnprotectedHeader());
 
@@ -116,10 +117,11 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
     public LongHeaderPacket Unprotect(Stream stream) {
         byte protectedFirstByte = Serializer.ReadByte(stream);
 
-        LongHeaderPacket packet = (protectedFirstByte & 0b11110000) switch {
-            0b11000000 => new InitialPacket(),
-            0b11110000 => new HandshakePacket(),
-            _ => throw new QuicException()
+        LongHeaderPacket packet = (PacketType)(protectedFirstByte & 0b11110000) switch {
+            PacketType.Initial => new InitialPacket(),
+            PacketType.Handshake => new HandshakePacket(),
+            PacketType.Retry => new RetryPacket(),
+            _ => throw new NotImplementedException()
         };
 
         stream.Position += 4;
@@ -141,6 +143,14 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
 
             if(EndpointType == EndpointType.Server)
                 GenerateInitialKeys(packet.DestinationConnectionId);
+        } else if(packet is RetryPacket retryPacket) {
+            retryPacket.Token = new byte[stream.Length - stream.Position - 16];
+
+            stream.ReadExactly(retryPacket.Token);
+
+            stream.Position += 16;
+
+            return packet;
         }
 
         (ulong length, packet.LengthLength) = Serializer.ReadVariableLength(stream);
@@ -173,9 +183,16 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
 
         packet.Payload = new byte[payload.Length];
 
-        using AesGcm aesGcm = new(destinationKey, 16);
+        switch(CipherSuite) {
+            case CipherSuite.Aes128GcmSHA256:
+            case CipherSuite.Aes256GcmSHA384:
+                using(AesGcm aesGcm = new(destinationKey, 16))
+                    aesGcm.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
 
-        aesGcm.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
+                break;
+            default:
+                throw new NotImplementedException();
+        }
 
         return packet;
     }

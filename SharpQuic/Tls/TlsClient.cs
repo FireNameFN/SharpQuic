@@ -3,8 +3,11 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading.Tasks;
+using Org.BouncyCastle.Asn1.X9;
 using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Agreement;
+using Org.BouncyCastle.Crypto.Agreement.Kdf;
 using Org.BouncyCastle.Crypto.Generators;
 using Org.BouncyCastle.Crypto.Parameters;
 using SharpQuic.Tls.Enums;
@@ -18,6 +21,8 @@ public sealed class TlsClient {
 
     public IFragmentWriter HandshakeFragmentWriter { get; set; }
 
+    public TlsState State { get; private set; }
+
     readonly QuicTransportParameters parameters;
 
     string[] protocols;
@@ -27,6 +32,7 @@ public sealed class TlsClient {
     X509Certificate2[] remoteCertificateChain;
 
     AsymmetricCipherKeyPair keyPair;
+    AsymmetricCipherKeyPair keyPair1;
 
     internal byte[] key = new byte[32];
 
@@ -54,26 +60,36 @@ public sealed class TlsClient {
         generator.Init(new(new(), 1));
 
         keyPair = generator.GenerateKeyPair();
+
+        ECKeyPairGenerator generator1 = new();
+
+        X9ECParameters parameters1 = ECNamedCurveTable.GetByName("secp256r1");
+
+        generator1.Init(new ECKeyGenerationParameters(new ECDomainParameters(parameters1), new()));
+
+        keyPair1 = generator1.GenerateKeyPair();
     }
 
     public void DeriveHandshakeSecrets() {
         hash = new byte[32];
 
-        HKDF.Extract(HashAlgorithmName.SHA256, [], [], hash);
+        HKDF.Extract(HashAlgorithmName.SHA256, hash, [], hash);
 
-        HKDFExtensions.ExpandLabel(hash, "derived", hash);
+        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "derived", SHA256.HashData([]), hash);
 
         HKDF.Extract(HashAlgorithmName.SHA256, key, hash, hash);
 
-        byte[] messagesArray = SHA256.HashData(messages.ToArray());
+        Span<byte> messagesHash = stackalloc byte[32];
+
+        SHA256.HashData(messages.ToArray(), messagesHash);
 
         clientHandshakeSecret = new byte[32];
 
-        HKDFExtensions.ExpandLabel(hash, "c hs traffic", messagesArray, clientHandshakeSecret);
+        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "c hs traffic", messagesHash, clientHandshakeSecret);
 
         serverHandshakeSecret = new byte[32];
 
-        HKDFExtensions.ExpandLabel(hash, "s hs traffic", messagesArray, serverHandshakeSecret);
+        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "s hs traffic", messagesHash, serverHandshakeSecret);
 
         keyPair = null;
         key = null;
@@ -84,15 +100,17 @@ public sealed class TlsClient {
 
         HKDF.Extract(HashAlgorithmName.SHA256, [], hash, hash);
 
-        byte[] messagesArray = SHA256.HashData(messages.ToArray());
+        Span<byte> messagesHash = stackalloc byte[32];
+
+        SHA256.HashData(messages.ToArray(), messagesHash);
 
         clientApplicationSecret = new byte[32];
 
-        HKDFExtensions.ExpandLabel(hash, "c ap traffic", messagesArray, clientApplicationSecret);
+        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "c ap traffic", messagesHash, clientApplicationSecret);
 
         serverApplicationSecret = new byte[32];
 
-        HKDFExtensions.ExpandLabel(hash, "s ap traffic", messagesArray, serverApplicationSecret);
+        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "s ap traffic", messagesHash, serverApplicationSecret);
 
         messages = null;
         hash = null;
@@ -103,13 +121,25 @@ public sealed class TlsClient {
 
         ((X25519PublicKeyParameters)keyPair.Public).Encode(key);
 
+        byte[] k = new byte[32];
+
+        byte[] k1 = new byte[32];
+
+        ((ECPublicKeyParameters)keyPair1.Public).Q.XCoord.GetEncoded().AsSpan().CopyTo(k);
+
+        ((ECPublicKeyParameters)keyPair1.Public).Q.XCoord.GetEncoded().AsSpan().CopyTo(k1);
+
+        byte[] key1 = [4, ..k, ..k1];
+
         ClientHelloMessage message = new() {
-            KeyShare = [new(NamedGroup.X25519, key)],
+            KeyShare = [new(NamedGroup.X25519, key), new(NamedGroup.SecP256r1, key1)],
             Protocols = protocols,
             Parameters = parameters
         };
 
         InitialFragmentWriter.WriteFragment(GetHandshake(message));
+
+        State = TlsState.WaitServerHello;
     }
 
     public void SendServerHello() {
@@ -156,6 +186,15 @@ public sealed class TlsClient {
         HandshakeFragmentWriter.WriteFragment(stream.ToArray());
     }
 
+    public void SendClientFinished() {
+        FinishedMessage finishedMessage = new() {
+            Messages = messages.ToArray(),
+            ServerHandshakeSecret = serverHandshakeSecret
+        };
+
+        HandshakeFragmentWriter.WriteFragment(GetHandshake(finishedMessage));
+    }
+
     byte[] GetHandshake(IMessage message) {
         MemoryStream messageStream = new();
 
@@ -174,51 +213,75 @@ public sealed class TlsClient {
 
         byte[] array = stream.ToArray();
 
+        if(message is ClientHelloMessage)
+            messages.SetLength(0);
+
         messages.Write(array);
 
         return array;
     }
 
-    public void ReceiveHandshake(byte[] array) {
-        MemoryStream stream = new(array);
+    public static (HandshakeType Type, int Length) ReadHandshakeHeader(byte[] data) {
+        MemoryStream stream = new(data);
 
-        while(stream.Position < stream.Length) {
-            HandshakeType type = (HandshakeType)Serializer.ReadByte(stream);
+        HandshakeType type = (HandshakeType)Serializer.ReadByte(stream);
 
-            stream.Position++;
+        stream.Position++;
 
-            ushort length = Serializer.ReadUInt16(stream);
+        ushort length = Serializer.ReadUInt16(stream);
 
-            byte[] message = new byte[length];
+        return (type, length);
+    }
 
-            stream.ReadExactly(message);
+    public void ReceiveHandshake(HandshakeType type, byte[] data) {
+        /*await Task.Yield();
 
-            stream.Position -= length;
+        HandshakeType type = (HandshakeType)Serializer.ReadByte(stream);
 
-            switch(type) {
-                case HandshakeType.ClientHello:
-                    ReceiveClientHello(ClientHelloMessage.Decode(stream));
-                    break;
-                case HandshakeType.ServerHello:
-                    ReceiveServerHello(ServerHelloMessage.Decode(stream));
-                    break;
-                case HandshakeType.Certificate:
-                    ReceiveCertificate(CertificateMessage.Decode(stream));
-                    break;
-                case HandshakeType.CertificateVerify:
-                    ReceiveCertificateVerify(CertificateVerifyMessage.Decode(stream));
-                    break;
-                default:
-                    stream.Position += length;
-                    break;
-            }
+        //stream.Position++;
 
-            Serializer.WriteByte(messages, (byte)type);
-            Serializer.WriteByte(messages, 0);
-            Serializer.WriteUInt16(messages, length);
+        stream.ReadByte();
 
-            messages.Write(message);
+        ushort length = Serializer.ReadUInt16(stream);
+
+        byte[] message = new byte[length];
+
+        await stream.ReadExactlyAsync(message);*/
+
+        //stream.Position -= length;
+
+        MemoryStream messageStream = new(data);
+
+        switch(type) {
+            case HandshakeType.ClientHello:
+                ReceiveClientHello(ClientHelloMessage.Decode(messageStream));
+                break;
+            case HandshakeType.ServerHello:
+                ReceiveServerHello(ServerHelloMessage.Decode(messageStream));
+                break;
+            case HandshakeType.EncryptedExtensions:
+                ReceiveEncryptedExtensions(EncryptedExtensionsMessage.Decode(messageStream));
+                break;
+            case HandshakeType.Certificate:
+                ReceiveCertificate(CertificateMessage.Decode(messageStream));
+                break;
+            case HandshakeType.CertificateVerify:
+                ReceiveCertificateVerify(CertificateVerifyMessage.Decode(messageStream));
+                break;
+            case HandshakeType.Finished:
+                ReceiveFinished(FinishedMessage.Decode(messageStream));
+                break;
+            default:
+                //messageStream.Position += length;
+                throw new NotImplementedException();
+                //break;
         }
+
+        Serializer.WriteByte(messages, (byte)type);
+        Serializer.WriteByte(messages, 0);
+        Serializer.WriteUInt16(messages, (ushort)data.Length);
+
+        messages.Write(data);
     }
 
     void ReceiveClientHello(ClientHelloMessage message) {
@@ -229,15 +292,27 @@ public sealed class TlsClient {
 
     void ReceiveServerHello(ServerHelloMessage message) {
         DeriveKey(message.KeyShare);
+
+        State = TlsState.WaitEncryptedExtensions;
+    }
+
+    void ReceiveEncryptedExtensions(EncryptedExtensionsMessage message) {
+        State = TlsState.WaitCertificate;
     }
 
     void ReceiveCertificate(CertificateMessage message) {
         remoteCertificateChain = message.CertificateChain;
+
+        State = TlsState.WaitCertificateVerify;
     }
 
     void ReceiveCertificateVerify(CertificateVerifyMessage message) {
         if(!CertificateVerifyMessage.Verify(EndpointType.Server, remoteCertificateChain[0], message.Signature, messages.ToArray()))
             throw new QuicException();
+    }
+
+    void ReceiveFinished(FinishedMessage message) {
+        State = TlsState.Connected;
     }
 
     void DeriveKey(KeyShareExtension.KeyShareEntry[] keyShare) {
@@ -248,5 +323,16 @@ public sealed class TlsClient {
         agreement.Init(keyPair.Private);
 
         agreement.CalculateAgreement(key, this.key);
+    }
+
+    public enum TlsState {
+        Start,
+        WaitServerHello,
+        WaitClientHello,
+        WaitEncryptedExtensions,
+        WaitCertificate,
+        WaitCertificateVerify,
+        WaitFinished,
+        Connected
     }
 }

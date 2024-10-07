@@ -19,7 +19,7 @@ public sealed class CertificateVerifyMessage : IMessage {
     static CertificateVerifyMessage() {
         Span<byte> repeations = stackalloc byte[64];
 
-        repeations.Fill(20);
+        repeations.Fill(0x20);
 
         string clientContextString = "TLS 1.3, client CertificateVerify";
 
@@ -41,13 +41,15 @@ public sealed class CertificateVerifyMessage : IMessage {
     public static CertificateVerifyMessage Create(EndpointType endpointType, byte[] messages, X509Certificate2 certificate) {
         byte[] signature = GetSignature(endpointType, messages);
 
-        using RSA rsa = RSA.Create();
+        using RSA rsa = certificate.GetRSAPrivateKey();
+        
+        if(rsa is not null)
+            signature = rsa.SignHash(signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        else {
+            using ECDsa ecdsa = certificate.GetECDsaPrivateKey();
 
-        RSAPKCS1SignatureFormatter formatter = new(certificate.GetRSAPrivateKey());
-
-        formatter.SetHashAlgorithm("SHA256");
-
-        signature = formatter.CreateSignature(signature);
+            signature = ecdsa.SignHash(signature);
+        }
 
         return new() {
             Signature = signature
@@ -76,11 +78,14 @@ public sealed class CertificateVerifyMessage : IMessage {
     }
 
     public static bool Verify(EndpointType endpointType, X509Certificate2 certificate, byte[] signature, ReadOnlySpan<byte> messages) {
-        RSAPKCS1SignatureDeformatter deformatter = new(certificate.PublicKey.GetRSAPublicKey());
+        using RSA rsa = certificate.PublicKey.GetRSAPublicKey();
 
-        deformatter.SetHashAlgorithm("SHA256");
+        if(rsa is not null)
+            return rsa.VerifyHash(GetSignature(endpointType, messages), signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
-        return deformatter.VerifySignature(GetSignature(endpointType, messages), signature);
+        using ECDsa ecdsa = certificate.PublicKey.GetECDsaPublicKey();
+
+        return ecdsa.VerifyHash(GetSignature(endpointType, messages), signature, DSASignatureFormat.Rfc3279DerSequence);
     }
 
     static byte[] GetSignature(EndpointType endpointType, ReadOnlySpan<byte> messages) {

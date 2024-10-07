@@ -41,7 +41,9 @@ public sealed class ServerHelloMessage : IMessage {
         int length = Serializer.ReadByte(stream);
         stream.Position += length;
 
-        stream.Position += 2;
+        //stream.Position += 2;
+
+        CipherSuite cipherSuite = (CipherSuite)Serializer.ReadUInt16(stream);
 
         stream.Position++;
 

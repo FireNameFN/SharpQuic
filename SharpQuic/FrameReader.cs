@@ -2,15 +2,18 @@ using System.IO;
 
 namespace SharpQuic;
 
-public sealed class PacketReader {
+public sealed class FrameReader {
     internal MemoryStream stream;
 
     public Frame Read() {
         FrameType type = (FrameType)Serializer.ReadVariableLength(stream).Value;
 
         return type switch {
+            0 => new(0, null),
             FrameType.Ack => ReadAck(),
             FrameType.Crypto => ReadCrypto(),
+            FrameType.ConnectionClose => ReadConnectionClose(),
+            FrameType.ConnectionClose2 => ReadConnectionClose(),
             _ => throw new QuicException()
         };
     }
@@ -39,5 +42,11 @@ public sealed class PacketReader {
         stream.ReadExactly(data);
 
         return new(FrameType.Crypto, data);
+    }
+
+    Frame ReadConnectionClose() {
+        ulong error = Serializer.ReadVariableLength(stream).Value;
+
+        return new(FrameType.ConnectionClose, null);
     }
 }

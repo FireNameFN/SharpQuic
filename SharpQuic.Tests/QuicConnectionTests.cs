@@ -1,5 +1,8 @@
+using System;
 using System.Linq;
 using System.Net;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using NUnit.Framework;
 
@@ -14,12 +17,25 @@ public class QuicConnectionTests {
         TaskCompletionSource source = new();
 
         _ = Task.Run(async () => {
-            client = await QuicConnection.ConnectAsync(IPEndPoint.Parse("127.0.0.1:50000"), ["test"]);
+            client = await QuicConnection.ConnectAsync(new() {
+                Point = IPEndPoint.Parse("127.0.0.1:50000"),
+                Protocols = ["test"]
+            });
 
             source.SetResult();
         });
 
-        QuicConnection server = await QuicConnection.ListenAsync(IPEndPoint.Parse("0.0.0.0:50000"), ["test"]);
+        CertificateRequest request = new CertificateRequest("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+
+        //CertificateRequest request = new CertificateRequest("cn=Test CA", ECDsa.Create(), HashAlgorithmName.SHA256);
+
+        X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
+
+        QuicConnection server = await QuicConnection.ListenAsync(new() {
+            Point = IPEndPoint.Parse("0.0.0.0:50000"),
+            Protocols = ["test"],
+            CertificateChain = [certificate]
+        });
 
         await source.Task;
 
@@ -29,12 +45,28 @@ public class QuicConnectionTests {
     }
 
     [Test, Explicit]
+    public async Task ConnectToDoQServer() {
+        IPHostEntry entry = await Dns.GetHostEntryAsync("dns.adguard-dns.com");
+        
+        await QuicConnection.ConnectAsync(new() {
+            Point = new(entry.AddressList[0], 853),
+            Protocols = ["doq"]
+        });
+    }
+
+    [Test, Explicit]
     public async Task ConnectToExternalServer() {
-        await QuicConnection.ConnectAsync(IPEndPoint.Parse("127.0.0.1:853"), ["doq"]);
+        await QuicConnection.ConnectAsync(new() {
+            Point = IPEndPoint.Parse("127.0.0.1:853"),
+            Protocols = ["doq"]
+        });
     }
 
     [Test, Explicit]
     public async Task ListenExternalClient() {
-        await QuicConnection.ListenAsync(IPEndPoint.Parse("127.0.0.1:50000"), ["test"]);
+        await QuicConnection.ListenAsync(new() {
+            Point = IPEndPoint.Parse("127.0.0.1:50000"),
+            Protocols = ["test"]
+        });
     }
 }

@@ -28,9 +28,10 @@ public sealed class ClientHelloMessage : IMessage {
 
         Serializer.WriteByte(stream, 0);
 
-        Serializer.WriteUInt16(stream, 4);
-        Serializer.WriteUInt16(stream, (ushort)CipherSuite.Aes128GcmSha256);
-        Serializer.WriteUInt16(stream, (ushort)CipherSuite.ChaCha20Poly1305Sha256);
+        Serializer.WriteUInt16(stream, 2);
+        Serializer.WriteUInt16(stream, (ushort)CipherSuite.Aes128GcmSHA256);
+        //Serializer.WriteUInt16(stream, (ushort)CipherSuite.Aes256GcmSHA384);
+        //Serializer.WriteUInt16(stream, (ushort)CipherSuite.ChaCha20Poly1305Sha256);
 
         Serializer.WriteByte(stream, 1);
         Serializer.WriteByte(stream, 0);

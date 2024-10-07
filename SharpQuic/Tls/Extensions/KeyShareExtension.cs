@@ -6,13 +6,19 @@ namespace SharpQuic.Tls.Extensions;
 public static class KeyShareExtension {
     public static void EncodeClient(Stream stream, KeyShareEntry[] entries) {
         Serializer.WriteUInt16(stream, (ushort)ExtensionType.KeyShare);
-
-        Serializer.WriteUInt16(stream, (ushort)(entries.Length * 36 + 2));
-
-        Serializer.WriteUInt16(stream, (ushort)(entries.Length * 36));
+        
+        MemoryStream keyStream = new();
 
         foreach(KeyShareEntry entry in entries)
-            EncodeEntry(stream, entry);
+            EncodeEntry(keyStream, entry);
+
+        byte[] keys = keyStream.ToArray();
+
+        Serializer.WriteUInt16(stream, (ushort)(keys.Length + 2));
+
+        Serializer.WriteUInt16(stream, (ushort)keys.Length);
+
+        stream.Write(keys);
     }
 
     public static void EncodeServer(Stream stream, KeyShareEntry entry) {
@@ -26,7 +32,7 @@ public static class KeyShareExtension {
     static void EncodeEntry(Stream stream, KeyShareEntry entry) {
         Serializer.WriteUInt16(stream, (ushort)entry.NamedGroup);
 
-        Serializer.WriteUInt16(stream, 32);
+        Serializer.WriteUInt16(stream, (ushort)entry.Key.Length);
 
         stream.Write(entry.Key);
     }

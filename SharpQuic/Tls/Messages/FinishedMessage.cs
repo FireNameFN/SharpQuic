@@ -19,14 +19,18 @@ public sealed class FinishedMessage : IMessage {
 
         Span<byte> hash = stackalloc byte[32];
 
-        SHA256.HashData(Messages, hash);;
+        SHA256.HashData(Messages, hash);
 
         Span<byte> data = stackalloc byte[32];
 
         HMACSHA256.HashData(key, hash, data);
+
+        stream.Write(data);
     }
 
-    //public static FinishedMessage Decode(Stream stream) {
-        
-    //}
+    public static FinishedMessage Decode(Stream stream) {
+        stream.Position += 32;
+
+        return new();
+    }
 }

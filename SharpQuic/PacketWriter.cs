@@ -1,29 +1,44 @@
 using System;
 using System.IO;
-using SharpQuic.Tls;
+using SharpQuic.Packets;
 
 namespace SharpQuic;
 
-public sealed class PacketWriter : IFragmentWriter {
-    internal readonly MemoryStream stream = new();
+public sealed class PacketWriter {
+    readonly QuicConnection connection;
 
-    public void WriteCrypto(ReadOnlySpan<byte> span) {
-        Serializer.WriteVariableLength(stream, (ulong)FrameType.Crypto);
+    readonly MemoryStream stream = new();
 
-        Serializer.WriteVariableLength(stream, 0);
+    readonly PacketType type;
 
-        Serializer.WriteVariableLength(stream, (ulong)span.Length);
+    uint nextPacketNumber;
 
-        stream.Write(span);
+    public FrameWriter FrameWriter { get; } = new();
+
+    internal PacketWriter(QuicConnection connection, PacketType type) {
+        this.connection = connection;
+        this.type = type;
     }
 
-    public void WritePaddingUntil1200() {
-        Span<byte> padding = stackalloc byte[1200 - (int)stream.Position];
-        
-        stream.Write(padding);
+    public void Write(byte[] token = null) {
+        LongHeaderPacket packet = type switch {
+            PacketType.Initial => new InitialPacket() { Token = token ?? [] },
+            PacketType.Handshake => new HandshakePacket(),
+            _ => throw new NotImplementedException()
+        };
+
+        packet.SourceConnectionId = connection.sourceConnectionId;
+        packet.DestinationConnectionId = connection.destinationConnectionId;
+        packet.PacketNumber = nextPacketNumber++;
+        packet.Payload = FrameWriter.ToPayload();
+
+        stream.Write(connection.protection.Protect(packet));
     }
 
-    void IFragmentWriter.WriteFragment(ReadOnlySpan<byte> fragment) {
-        WriteCrypto(fragment);
+    public void CopyTo(Stream stream) {
+        this.stream.Position = 0;
+        this.stream.CopyTo(stream);
+        //this.stream.Position = 0;
+        this.stream.SetLength(0);
     }
 }

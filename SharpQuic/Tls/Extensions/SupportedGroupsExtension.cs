@@ -7,9 +7,10 @@ public static class SupportedGroupsExtension {
     public static void Encode(Stream stream) {
         Serializer.WriteUInt16(stream, (ushort)ExtensionType.SupportedGroups);
 
-        Serializer.WriteUInt16(stream, 4);
+        Serializer.WriteUInt16(stream, 6);
 
-        Serializer.WriteUInt16(stream, 2);
+        Serializer.WriteUInt16(stream, 4);
+        Serializer.WriteUInt16(stream, (ushort)NamedGroup.SecP256r1);
         Serializer.WriteUInt16(stream, (ushort)NamedGroup.X25519);
     }
 

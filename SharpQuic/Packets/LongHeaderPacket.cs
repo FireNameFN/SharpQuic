@@ -3,7 +3,7 @@ using System.IO;
 namespace SharpQuic.Packets;
 
 public class LongHeaderPacket {
-    public byte PacketType { get; protected set; }
+    public PacketType PacketType { get; protected set; }
 
     public byte[] DestinationConnectionId { get; set; }
 
@@ -30,7 +30,7 @@ public class LongHeaderPacket {
     }
 
     public byte GetUnprotectedFirstByte() {
-        return (byte)(PacketType | GetPacketNumberLength() - 1);
+        return (byte)((byte)PacketType | GetPacketNumberLength() - 1);
     }
 
     public byte[] EncodePublicHeader() {

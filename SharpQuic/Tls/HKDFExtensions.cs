@@ -18,15 +18,15 @@ public static class HKDFExtensions {
         HKDF.Expand(hashAlgorithmName, secret, output, info);
     }
 
-    public static void ExpandLabel(ReadOnlySpan<byte> secret, string label, ReadOnlySpan<byte> context, Span<byte> output) {
+    public static void ExpandLabel(HashAlgorithmName hash, ReadOnlySpan<byte> secret, string label, ReadOnlySpan<byte> context, Span<byte> output) {
         Span<byte> labelSpan = stackalloc byte[Encoding.ASCII.GetByteCount(label)];
 
         Encoding.ASCII.GetBytes(label, labelSpan);
 
-        ExpandLabel(HashAlgorithmName.SHA256, secret, labelSpan, context, output);
+        ExpandLabel(hash, secret, labelSpan, context, output);
     }
 
     public static void ExpandLabel(ReadOnlySpan<byte> secret, string label, Span<byte> output) {
-        ExpandLabel(secret, label, [], output);
+        ExpandLabel(HashAlgorithmName.SHA256, secret, label, [], output);
     }
 }
