@@ -7,8 +7,9 @@
 ## Tasks
 - [X] TLS ClientHello and ServerHello
 - [X] QUIC Packet Protection
-- [ ] TLS Handshake
+- [X] TLS Handshake
 - [ ] Basic QUIC packet exchange
+- [ ] Throw right errors and CONNECTION_CLOSE
 - [ ] Own cryptography (ECDHE)
 - [ ] ...
 
