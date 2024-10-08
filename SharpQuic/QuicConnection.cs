@@ -16,11 +16,15 @@ public sealed class QuicConnection {
 
     internal readonly QuicPacketProtection protection;
 
+    readonly QuicTransportParameters parameters;
+
     readonly PacketWriter initialPacketWriter;
 
     readonly PacketWriter handshakePacketWriter;
 
     readonly PacketWriter applicationPacketWriter;
+
+    internal readonly EndpointType endpointType;
 
     internal readonly byte[] sourceConnectionId;
 
@@ -37,7 +41,10 @@ public sealed class QuicConnection {
 
     QuicConnection(EndpointType endpointType, UdpClient client, QuicConfiguration configuration) {
         this.client = client;
-        protection = new(endpointType);
+        this.endpointType = endpointType;
+        protection = new(endpointType, configuration.Parameters.InitialSourceConnectionId);
+
+        parameters = configuration.Parameters;
 
         initialPacketWriter = new(this, PacketType.Initial);
         handshakePacketWriter = new(this, PacketType.Handshake);
@@ -53,9 +60,7 @@ public sealed class QuicConnection {
     }
 
     public static async Task<QuicConnection> ConnectAsync(QuicConfiguration configuration) {
-        QuicTransportParameters parameters = new() {
-            InitialSourceConnectionId = RandomNumberGenerator.GetBytes(8)
-        };
+        configuration.Parameters.InitialSourceConnectionId = RandomNumberGenerator.GetBytes(8);
 
         QuicConnection connection = new(EndpointType.Client, new(), configuration);
 
@@ -63,112 +68,21 @@ public sealed class QuicConnection {
 
         await connection.SendClientHelloAsync();
 
-        //await Task.Factory.StartNew(connection.HandshakeRunner);
-
         await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
 
         await connection.ready.Task;
-
-        /*UdpReceiveResult result = await connection.client.ReceiveAsync();
-
-        MemoryStream stream = new(result.Buffer);
-
-        InitialPacket packet = (InitialPacket)connection.protection.Unprotect(stream);
-
-        FrameReader reader = new() {
-            stream = new MemoryStream(packet.Payload)
-        };
-
-        Frame frame;
-
-        do {
-            frame = reader.Read();
-        } while(frame.Type != FrameType.Crypto);
-
-        connection.tlsClient.ReceiveHandshake(frame.Data);
-
-        connection.tlsClient.DeriveHandshakeSecrets();
-
-        connection.protection.GenerateKeys(connection.tlsClient.clientHandshakeSecret, connection.tlsClient.serverHandshakeSecret);*/
 
         return connection;
     }
 
     public static async Task<QuicConnection> ListenAsync(QuicConfiguration configuration) {
-        configuration = configuration with {
-            Parameters = configuration.Parameters with {
-                InitialSourceConnectionId = RandomNumberGenerator.GetBytes(8)
-            }
-        };
+        configuration.Parameters.InitialSourceConnectionId = RandomNumberGenerator.GetBytes(8);
 
         QuicConnection connection = new(EndpointType.Server, new(configuration.Point), configuration);
 
         await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
 
         await connection.ready.Task;
-
-        /*UdpReceiveResult result = await connection.client.ReceiveAsync();
-
-        MemoryStream stream = new(result.Buffer);
-
-        InitialPacket packet = (InitialPacket)connection.protection.Unprotect(stream);
-
-        FrameReader reader = new() {
-            stream = new MemoryStream(packet.Payload)
-        };
-
-        Frame frame = reader.Read();
-
-        connection.tlsClient.ReceiveHandshake(frame.Data);
-
-        connection.tlsClient.SendServerHello();
-
-        connection.initialPacketWriter.Write(PacketType.Initial, connection.initialFrameWriter.ToPayload());
-
-        await connection.Flush();
-
-        connection.tlsClient.DeriveHandshakeSecrets();
-
-        connection.protection.GenerateKeys(connection.tlsClient.clientHandshakeSecret, connection.tlsClient.serverHandshakeSecret);*/
-
-        /*connection.tlsClient.SendServerHandshake();
-
-        packet = new() {
-            DestinationConnectionId = packet.SourceConnectionId,
-            SourceConnectionId = packet.DestinationConnectionId,
-            Token = [],
-            Payload = connection.handshakePacketWriter.stream.ToArray()
-        };
-
-        protectedPacket = connection.protection.Protect(packet);
-
-        await connection.client.SendAsync(protectedPacket, result.RemoteEndPoint);
-
-        result = await connection.client.ReceiveAsync();
-
-        stream = new(result.Buffer);
-
-        connection.protection.Unprotect(stream);
-
-        result = await connection.client.ReceiveAsync();
-
-        stream = new(result.Buffer);
-
-        HandshakePacket handshakePacket = (HandshakePacket)connection.protection.Unprotect(stream);
-
-        reader = new() {
-            stream = new MemoryStream(handshakePacket.Payload)
-        };
-
-        do {
-            frame = reader.Read();
-        } while(frame.Type != FrameType.Crypto);
-
-        connection.tlsClient.ReceiveHandshake(frame.Data);
-
-        connection.tlsClient.DeriveApplicationSecrets();
-
-        connection.protection.GenerateKeys(connection.tlsClient.clientApplicationSecret, connection.tlsClient.serverApplicationSecret);*/
 
         return connection;
     }
@@ -188,22 +102,51 @@ public sealed class QuicConnection {
             while(true) {
                 UdpReceiveResult result = await client.ReceiveAsync();
 
+                Console.WriteLine($"Received datagram: {result.Buffer.Length}");
+
                 client.Connect(result.RemoteEndPoint);
 
                 MemoryStream stream = new(result.Buffer);
 
                 while(stream.Position < stream.Length) {
-                    LongHeaderPacket packet = protection.Unprotect(stream);
+                    Packet packet = protection.Unprotect(stream);
+
+                    if(packet is null)
+                        break;
+
+                    if(packet is not RetryPacket)
+                        Console.WriteLine($"Unprotected packet: {packet.Payload.Length}");
+                    else
+                        Console.WriteLine($"Retry packet");
+
+                    if(endpointType == EndpointType.Server && state == State.Null && packet is InitialPacket) {
+                        parameters.OriginalDestinationConnectionId = packet.DestinationConnectionId;
+                    }
                     
                     await HandlePacketAsync(packet);
+
+                    switch(packet.PacketType) {
+                        case PacketType.Initial:
+                            initialPacketWriter.Ack(packet.PacketNumber);
+                            break;
+                        case PacketType.Handshake:
+                            handshakePacketWriter.Ack(packet.PacketNumber);
+                            break;
+                        case PacketType.OneRtt:
+                            applicationPacketWriter.Ack(packet.PacketNumber);
+                            break;
+                    }
+
+                    await HandleHandshakeAsync();
                 }
             }
         } catch(Exception e) {
-            ready.SetException(e);
+            if(!ready.Task.IsCompleted)
+                ready.SetException(e);
         }
     }
 
-    async Task HandlePacketAsync(LongHeaderPacket packet) {
+    async Task HandlePacketAsync(Packet packet) {
         if(packet is RetryPacket retryPacket) {
             await SendClientHelloAsync(retryPacket.Token);
 
@@ -219,7 +162,7 @@ public sealed class QuicConnection {
 
             switch(frame.Type) {
                 case FrameType.Crypto:
-                    destinationConnectionId = packet.SourceConnectionId;
+                    destinationConnectionId = ((LongHeaderPacket)packet).SourceConnectionId;
 
                     long position = cryptoStream.Position;
 
@@ -245,44 +188,6 @@ public sealed class QuicConnection {
 
                             tlsClient.ReceiveHandshake(cryptoType, data);
 
-                            if(state == State.Null) {
-                                if(protection.EndpointType == EndpointType.Server) {
-                                    tlsClient.SendServerHello();
-                            
-                                    initialPacketWriter.Write();
-
-                                    tlsClient.DeriveHandshakeSecrets();
-
-                                    protection.GenerateKeys(tlsClient.clientHandshakeSecret, tlsClient.serverHandshakeSecret);
-
-                                    tlsClient.SendServerHandshake();
-
-                                    handshakePacketWriter.Write();
-
-                                    await FlushAsync();
-                                } else {
-                                    tlsClient.DeriveHandshakeSecrets();
-
-                                    protection.GenerateKeys(tlsClient.clientHandshakeSecret, tlsClient.serverHandshakeSecret);
-                                }
-
-                                state = State.Connected;
-                            }
-
-                            if(state == State.Connected && tlsClient.State == TlsClient.TlsState.Connected) {
-                                if(protection.EndpointType == EndpointType.Client) {
-                                    tlsClient.SendClientFinished();
-
-                                    handshakePacketWriter.Write();
-
-                                    await FlushAsync();
-                                }
-
-                                ready.SetResult();
-
-                                state = State.Idle;
-                            }
-
                             cryptoType = 0;
                         } else
                             break;
@@ -290,6 +195,56 @@ public sealed class QuicConnection {
 
                     break;
             }
+        }
+    }
+
+    async Task HandleHandshakeAsync() {
+        if(state == State.Null && tlsClient.State >= TlsClient.TlsState.WaitEncryptedExtensions) {
+            if(endpointType == EndpointType.Server) {
+                tlsClient.SendServerHello();
+        
+                initialPacketWriter.Write();
+                
+                tlsClient.DeriveHandshakeSecrets();
+
+                protection.GenerateKeys(tlsClient.clientHandshakeSecret, tlsClient.serverHandshakeSecret);
+
+                Console.WriteLine("Generated handshake keys.");
+
+                tlsClient.SendServerHandshake();
+
+                handshakePacketWriter.Write();
+
+                Console.WriteLine("Sending server handshake.");
+
+                await FlushAsync();
+            } else {
+                tlsClient.DeriveHandshakeSecrets();
+
+                protection.GenerateKeys(tlsClient.clientHandshakeSecret, tlsClient.serverHandshakeSecret);
+
+                Console.WriteLine("Generated handshake keys.");
+            }
+
+            state = State.Connected;
+        }
+
+        if(state == State.Connected && tlsClient.State == TlsClient.TlsState.Connected) {
+            if(endpointType == EndpointType.Client) {
+                tlsClient.SendClientFinished();
+
+                handshakePacketWriter.Write();
+
+                await FlushAsync();
+            }
+
+            tlsClient.DeriveApplicationSecrets();
+
+            protection.GenerateKeys(tlsClient.clientApplicationSecret, tlsClient.serverApplicationSecret);
+
+            ready.SetResult();
+
+            state = State.Idle;
         }
     }
 

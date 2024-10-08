@@ -8,29 +8,49 @@ namespace SharpQuic.Tls.Messages;
 public sealed class FinishedMessage : IMessage {
     public HandshakeType Type { get; } = HandshakeType.Finished;
 
-    public byte[] Messages { get; set; }
+    public byte[] VerifyData { get; set; }
 
-    public byte[] ServerHandshakeSecret { get; set; }
+    public static FinishedMessage Create(byte[] messages, byte[] handshakeSecret) {
+        FinishedMessage message = new() {
+            VerifyData = new byte[32]
+        };
+
+        CreateVerifyData(messages, handshakeSecret, message.VerifyData);
+
+        return message;
+    }
 
     public void Encode(Stream stream) {
-        Span<byte> key = stackalloc byte[32];
-
-        HKDFExtensions.ExpandLabel(ServerHandshakeSecret, "finished", key);
-
-        Span<byte> hash = stackalloc byte[32];
-
-        SHA256.HashData(Messages, hash);
-
-        Span<byte> data = stackalloc byte[32];
-
-        HMACSHA256.HashData(key, hash, data);
-
-        stream.Write(data);
+        stream.Write(VerifyData);
     }
 
     public static FinishedMessage Decode(Stream stream) {
-        stream.Position += 32;
+        FinishedMessage message = new() {
+            VerifyData = new byte[32]
+        };
 
-        return new();
+        stream.ReadExactly(message.VerifyData);
+
+        return message;
+    }
+
+    public bool Verify(byte[] messages, byte[] handshakeSecret) {
+        Span<byte> data = stackalloc byte[32];
+
+        CreateVerifyData(messages, handshakeSecret, data);
+
+        return data.SequenceEqual(VerifyData);
+    }
+
+    static void CreateVerifyData(byte[] messages, byte[] handshakeSecret, Span<byte> data) {
+        Span<byte> key = stackalloc byte[32];
+
+        HKDFExtensions.ExpandLabel(handshakeSecret, "finished", key);
+
+        Span<byte> hash = stackalloc byte[32];
+
+        SHA256.HashData(messages, hash);
+
+        HMACSHA256.HashData(key, hash, data);
     }
 }

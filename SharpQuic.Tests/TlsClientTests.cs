@@ -6,13 +6,14 @@ using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using SharpQuic.Tls;
+using SharpQuic.Tls.Enums;
 
 namespace SharpQuic.Tests;
 
 [TestFixture]
 public class TlsClientTests {
     [Test]
-    public async Task TlsClientTest() {
+    public void TlsClientTest() {
         CertificateRequest request = new("cn=TlsClientTest CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         
         X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
@@ -38,13 +39,29 @@ public class TlsClientTests {
             stream = new MemoryStream(clientInitialPacketWriter.ToPayload())
         };
 
-        //await server.ReceiveHandshakeAsync(new MemoryStream(reader.Read().Data));
+        byte[] data = reader.Read().Data;
+
+        server.ReceiveHandshake(TlsClient.ReadHandshakeHeader(data[..4]).Type, data[4..]);
 
         server.SendServerHello();
 
         reader.stream = new MemoryStream(serverInitialPacketWriter.ToPayload());
 
-        //await client.ReceiveHandshakeAsync(new MemoryStream(reader.Read().Data));
+        MemoryStream stream = new(reader.Read().Data);
+
+        while(stream.Position < stream.Length) {
+            data = new byte[4];
+
+            stream.ReadExactly(data);
+
+            (HandshakeType type, int length) = TlsClient.ReadHandshakeHeader(data);
+
+            data = new byte[length];
+
+            stream.ReadExactly(data);
+
+            client.ReceiveHandshake(type, data);
+        }
 
         Assert.That(client.key.SequenceEqual(server.key));
 
@@ -58,7 +75,21 @@ public class TlsClientTests {
 
         reader.stream = new MemoryStream(serverHandshakePacketWriter.ToPayload());
 
-        //await client.ReceiveHandshakeAsync(new MemoryStream(reader.Read().Data));
+        stream = new(reader.Read().Data);
+
+        while(stream.Position < stream.Length) {
+            data = new byte[4];
+
+            stream.ReadExactly(data);
+
+            (HandshakeType type, int length) = TlsClient.ReadHandshakeHeader(data);
+
+            data = new byte[length];
+
+            stream.ReadExactly(data);
+
+            client.ReceiveHandshake(type, data);
+        }
 
         client.DeriveApplicationSecrets();
         server.DeriveApplicationSecrets();

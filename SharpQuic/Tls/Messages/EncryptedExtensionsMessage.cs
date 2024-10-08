@@ -9,11 +9,13 @@ public sealed class EncryptedExtensionsMessage : IMessage {
 
     public string Protocol { get; set; }
 
+    public QuicTransportParameters Parameters { get; set; }
+
     public void Encode(Stream stream) {
         MemoryStream extensionsStream = new();
 
         AlpnExtension.Encode(extensionsStream, [Protocol]);
-        QuicTransportParametersExtension.Encode(extensionsStream, new());
+        QuicTransportParametersExtension.Encode(extensionsStream, Parameters);
 
         byte[] extensions = extensionsStream.ToArray();
 

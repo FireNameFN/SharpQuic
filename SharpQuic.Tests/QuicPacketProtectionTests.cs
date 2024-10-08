@@ -37,7 +37,7 @@ public class QuicPacketProtectionTests {
 
         Assert.That(header.Equals("c300000001088394c8f03e5157080000449e00000002", StringComparison.CurrentCultureIgnoreCase));
 
-        QuicPacketProtection protection = new(EndpointType.Client);
+        QuicPacketProtection protection = new(EndpointType.Client, []);
 
         byte[] encodedPacket = protection.Protect(packet);
 
@@ -83,7 +83,7 @@ public class QuicPacketProtectionTests {
             e221af44860018ab0856972e194cd934"
             .Replace("\r\n", "").Replace(" ", ""), StringComparison.CurrentCultureIgnoreCase));
 
-        QuicPacketProtection destinationProtection = new(EndpointType.Server);
+        QuicPacketProtection destinationProtection = new(EndpointType.Server, []);
 
         MemoryStream stream = new(encodedPacket);
 

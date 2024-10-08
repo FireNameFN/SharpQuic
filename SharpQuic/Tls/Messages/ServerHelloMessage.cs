@@ -11,8 +11,6 @@ public sealed class ServerHelloMessage : IMessage {
 
     public KeyShareExtension.KeyShareEntry[] KeyShare { get; set; }
 
-    public byte[] LegacySessionId { get; set; }
-
     public void Encode(Stream stream) {
         Serializer.WriteUInt16(stream, 0x0303);
 
@@ -22,10 +20,9 @@ public sealed class ServerHelloMessage : IMessage {
 
         stream.Write(random);
 
-        Serializer.WriteByte(stream, (byte)LegacySessionId.Length);
-        stream.Write(LegacySessionId);
+        Serializer.WriteByte(stream, 0);
 
-        Serializer.WriteUInt16(stream, (ushort)CipherSuite.ChaCha20Poly1305Sha256);
+        Serializer.WriteUInt16(stream, (ushort)CipherSuite.Aes128GcmSHA256);
 
         Serializer.WriteByte(stream, 0);
 

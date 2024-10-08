@@ -11,23 +11,27 @@ namespace SharpQuic.Tests;
 [TestFixture]
 public class QuicConnectionTests {
     [Test]
-    public async Task QuicConnectionTest() {
+    public async Task QuicConnectionTestAsync() {
         QuicConnection client = null;
 
         TaskCompletionSource source = new();
 
         _ = Task.Run(async () => {
-            client = await QuicConnection.ConnectAsync(new() {
-                Point = IPEndPoint.Parse("127.0.0.1:50000"),
-                Protocols = ["test"]
-            });
+            //try {
+                client = await QuicConnection.ConnectAsync(new() {
+                    Point = IPEndPoint.Parse("127.0.0.1:50000"),
+                    Protocols = ["test"]
+                });
 
-            source.SetResult();
+                source.SetResult();
+            /*} catch(Exception e) {
+                source.SetException(e);
+            }*/
         });
 
-        CertificateRequest request = new CertificateRequest("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
-        //CertificateRequest request = new CertificateRequest("cn=Test CA", ECDsa.Create(), HashAlgorithmName.SHA256);
+        //CertificateRequest request = new("cn=Test CA", ECDsa.Create(), HashAlgorithmName.SHA256);
 
         X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
 
@@ -45,7 +49,7 @@ public class QuicConnectionTests {
     }
 
     [Test, Explicit]
-    public async Task ConnectToDoQServer() {
+    public async Task ConnectToDoQServerTestAsync() {
         IPHostEntry entry = await Dns.GetHostEntryAsync("dns.adguard-dns.com");
         
         await QuicConnection.ConnectAsync(new() {
@@ -55,7 +59,7 @@ public class QuicConnectionTests {
     }
 
     [Test, Explicit]
-    public async Task ConnectToExternalServer() {
+    public async Task ConnectToExternalServerTestAsync() {
         await QuicConnection.ConnectAsync(new() {
             Point = IPEndPoint.Parse("127.0.0.1:853"),
             Protocols = ["doq"]
@@ -63,10 +67,21 @@ public class QuicConnectionTests {
     }
 
     [Test, Explicit]
-    public async Task ListenExternalClient() {
+    public async Task ListenExternalClientTestAsync() {
+        CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+
+        SubjectAlternativeNameBuilder builder = new();
+
+        builder.AddIpAddress(IPAddress.Parse("127.0.0.1"));
+
+        request.CertificateExtensions.Add(builder.Build());
+
+        X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
+
         await QuicConnection.ListenAsync(new() {
             Point = IPEndPoint.Parse("127.0.0.1:50000"),
-            Protocols = ["test"]
+            Protocols = ["test"],
+            CertificateChain = [certificate]
         });
     }
 }

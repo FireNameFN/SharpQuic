@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using SharpQuic.Packets;
 using SharpQuic.Tls;
@@ -8,12 +9,14 @@ using SharpQuic.Tls.Enums;
 
 namespace SharpQuic;
 
-public sealed class QuicPacketProtection(EndpointType endpointType) {
+public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourceConnectionId) {
     static readonly byte[] InitialSalt = Converter.HexToBytes("38762cf7f55934b34d179ae6a4c80cadccbb7f0a");
 
     public EndpointType EndpointType { get; } = endpointType;
 
     public CipherSuite CipherSuite { get; set; } = CipherSuite.Aes128GcmSHA256;
+
+    readonly byte[] sourceConnectionId = sourceConnectionId;
 
     bool initialKeysGenerated;
 
@@ -57,7 +60,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
         initialKeysGenerated = true;
     }
 
-    public byte[] Protect(LongHeaderPacket packet) {
+    public byte[] Protect(Packet packet) {
         if(!initialKeysGenerated && packet is InitialPacket)
             GenerateInitialKeys(packet.DestinationConnectionId);
 
@@ -84,7 +87,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
 
         Span<byte> mask = stackalloc byte[16];
 
-        GetMask(sourceHp, sample, mask);
+        GetMask(sourceHp, sample, packet.PacketType, mask);
 
         byte protectedFirstByte = (byte)(packet.GetUnprotectedFirstByte() ^ mask[0]);
 
@@ -114,43 +117,71 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
         return stream.ToArray();
     }
 
-    public LongHeaderPacket Unprotect(Stream stream) {
+    public Packet Unprotect(Stream stream) {
         byte protectedFirstByte = Serializer.ReadByte(stream);
 
-        LongHeaderPacket packet = (PacketType)(protectedFirstByte & 0b11110000) switch {
+        PacketType type = (PacketType)(protectedFirstByte & 0b11110000);
+
+        Packet packet = type switch {
             PacketType.Initial => new InitialPacket(),
             PacketType.Handshake => new HandshakePacket(),
             PacketType.Retry => new RetryPacket(),
-            _ => throw new NotImplementedException()
+            _ => null
         };
 
-        stream.Position += 4;
+        if(packet is null) {
+            type = (PacketType)(protectedFirstByte & 0b11100000);
 
-        packet.DestinationConnectionId = new byte[Serializer.ReadByte(stream)];
+            packet = type switch {
+                PacketType.OneRtt => new OneRttPacket(),
+                PacketType.OneRttSpin => new OneRttPacket(),
+                0 => null,
+                _ => throw new NotImplementedException()
+            };
+
+            if(packet is null)
+                return null;
+        }
+
+        int destinationConnectionIdLength;
+
+        if(packet is LongHeaderPacket) {
+            stream.Position += 4;
+
+            destinationConnectionIdLength = Serializer.ReadByte(stream);
+        } else
+            destinationConnectionIdLength = sourceConnectionId.Length;
+
+        packet.DestinationConnectionId = new byte[destinationConnectionIdLength];
 
         stream.ReadExactly(packet.DestinationConnectionId);
 
-        packet.SourceConnectionId = new byte[Serializer.ReadByte(stream)];
+        if(packet is not InitialPacket && !packet.DestinationConnectionId.SequenceEqual(sourceConnectionId))
+            return null;
 
-        stream.ReadExactly(packet.SourceConnectionId);
+        if(packet is LongHeaderPacket longHeaderPacket) {
+            longHeaderPacket.SourceConnectionId = new byte[Serializer.ReadByte(stream)];
 
-        if(packet is InitialPacket initialPacket) {
-            (ulong tokenLength, initialPacket.TokenLengthLength) = Serializer.ReadVariableLength(stream);
-            
-            initialPacket.Token = new byte[tokenLength];
+            stream.ReadExactly(longHeaderPacket.SourceConnectionId);
 
-            stream.ReadExactly(initialPacket.Token);
+            if(packet is InitialPacket initialPacket) {
+                (ulong tokenLength, initialPacket.TokenLengthLength) = Serializer.ReadVariableLength(stream);
+                
+                initialPacket.Token = new byte[tokenLength];
 
-            if(EndpointType == EndpointType.Server)
-                GenerateInitialKeys(packet.DestinationConnectionId);
-        } else if(packet is RetryPacket retryPacket) {
-            retryPacket.Token = new byte[stream.Length - stream.Position - 16];
+                stream.ReadExactly(initialPacket.Token);
 
-            stream.ReadExactly(retryPacket.Token);
+                if(EndpointType == EndpointType.Server)
+                    GenerateInitialKeys(packet.DestinationConnectionId);
+            } else if(packet is RetryPacket retryPacket) {
+                retryPacket.Token = new byte[stream.Length - stream.Position - 16];
 
-            stream.Position += 16;
+                stream.ReadExactly(retryPacket.Token);
 
-            return packet;
+                stream.Position += 16;
+
+                return packet;
+            }
         }
 
         (ulong length, packet.LengthLength) = Serializer.ReadVariableLength(stream);
@@ -163,7 +194,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
 
         Span<byte> mask = stackalloc byte[16];
 
-        GetMask(destinationHp, sample, mask);
+        GetMask(destinationHp, sample, type, mask);
 
         int packetNumberLength = ((protectedFirstByte ^ mask[0]) & 0b11) + 1;
 
@@ -206,14 +237,14 @@ public sealed class QuicPacketProtection(EndpointType endpointType) {
             nonce[i] = (byte)(iv[i] ^ packetNumberSpan[i]);
     }
 
-    static void GetMask(byte[] hp, ReadOnlySpan<byte> sample, Span<byte> mask) {
+    static void GetMask(byte[] hp, ReadOnlySpan<byte> sample, PacketType type, Span<byte> mask) {
         using Aes aes = Aes.Create();
 
         aes.Key = hp;
 
         aes.EncryptEcb(sample, mask, PaddingMode.None);
 
-        mask[0] &= 0b1111;
+        mask[0] &= type.HasFlag(PacketType.LongHeader) ? (byte)0b1111 : (byte)0b11111;
     }
 
     static uint MaskPacketNumber(ReadOnlySpan<byte> mask, int packetNumberLength, Span<byte> packetNumberSpan) {

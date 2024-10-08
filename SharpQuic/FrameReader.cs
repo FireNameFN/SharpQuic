@@ -12,6 +12,7 @@ public sealed class FrameReader {
             0 => new(0, null),
             FrameType.Ack => ReadAck(),
             FrameType.Crypto => ReadCrypto(),
+            > FrameType.Stream and < FrameType.StreamMax => ReadStream(type),
             FrameType.ConnectionClose => ReadConnectionClose(),
             FrameType.ConnectionClose2 => ReadConnectionClose(),
             _ => throw new QuicException()
@@ -42,6 +43,26 @@ public sealed class FrameReader {
         stream.ReadExactly(data);
 
         return new(FrameType.Crypto, data);
+    }
+
+    Frame ReadStream(FrameType type) {
+        ulong id = Serializer.ReadVariableLength(stream).Value;
+
+        ulong offset;
+
+        ulong length = 0;
+
+        if(type.HasFlag(FrameType.StreamOffset))
+            offset = Serializer.ReadVariableLength(stream).Value;
+        
+        if(type.HasFlag(FrameType.StreamLength))
+            length = Serializer.ReadVariableLength(stream).Value;
+
+        byte[] data = new byte[length > 0 ? (int)length : (stream.Length - stream.Position)];
+
+        stream.ReadExactly(data);
+
+        return new(type, data);
     }
 
     Frame ReadConnectionClose() {

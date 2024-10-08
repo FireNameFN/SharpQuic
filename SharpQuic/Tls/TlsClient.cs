@@ -3,11 +3,9 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
-using System.Threading.Tasks;
 using Org.BouncyCastle.Asn1.X9;
 using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Agreement;
-using Org.BouncyCastle.Crypto.Agreement.Kdf;
 using Org.BouncyCastle.Crypto.Generators;
 using Org.BouncyCastle.Crypto.Parameters;
 using SharpQuic.Tls.Enums;
@@ -35,8 +33,6 @@ public sealed class TlsClient {
     AsymmetricCipherKeyPair keyPair1;
 
     internal byte[] key = new byte[32];
-
-    byte[] legacySessionId;
 
     MemoryStream messages = new();
 
@@ -148,8 +144,7 @@ public sealed class TlsClient {
         ((X25519PublicKeyParameters)keyPair.Public).Encode(key);
 
         ServerHelloMessage message = new() {
-            KeyShare = [new(NamedGroup.X25519, key)],
-            LegacySessionId = legacySessionId
+            KeyShare = [new(NamedGroup.X25519, key)]
         };
 
         InitialFragmentWriter.WriteFragment(GetHandshake(message));
@@ -159,7 +154,8 @@ public sealed class TlsClient {
         MemoryStream stream = new();
 
         EncryptedExtensionsMessage encryptedExtensionsMessage = new() {
-            Protocol = protocols[0]
+            Protocol = protocols[0],
+            Parameters = parameters
         };
 
         stream.Write(GetHandshake(encryptedExtensionsMessage));
@@ -176,21 +172,17 @@ public sealed class TlsClient {
             stream.Write(GetHandshake(certificateVerifyMessage));
         }
 
-        FinishedMessage finishedMessage = new() {
-            Messages = messages.ToArray(),
-            ServerHandshakeSecret = serverHandshakeSecret
-        };
+        FinishedMessage finishedMessage = FinishedMessage.Create(messages.ToArray(), serverHandshakeSecret);
 
         stream.Write(GetHandshake(finishedMessage));
 
         HandshakeFragmentWriter.WriteFragment(stream.ToArray());
+
+        State = TlsState.WaitClientFinished;
     }
 
     public void SendClientFinished() {
-        FinishedMessage finishedMessage = new() {
-            Messages = messages.ToArray(),
-            ServerHandshakeSecret = serverHandshakeSecret
-        };
+        FinishedMessage finishedMessage = FinishedMessage.Create(messages.ToArray(), clientHandshakeSecret);
 
         HandshakeFragmentWriter.WriteFragment(GetHandshake(finishedMessage));
     }
@@ -234,42 +226,32 @@ public sealed class TlsClient {
     }
 
     public void ReceiveHandshake(HandshakeType type, byte[] data) {
-        /*await Task.Yield();
-
-        HandshakeType type = (HandshakeType)Serializer.ReadByte(stream);
-
-        //stream.Position++;
-
-        stream.ReadByte();
-
-        ushort length = Serializer.ReadUInt16(stream);
-
-        byte[] message = new byte[length];
-
-        await stream.ReadExactlyAsync(message);*/
-
-        //stream.Position -= length;
-
         MemoryStream messageStream = new(data);
 
         switch(type) {
             case HandshakeType.ClientHello:
                 ReceiveClientHello(ClientHelloMessage.Decode(messageStream));
+                Console.WriteLine($"Received ClientHello");
                 break;
             case HandshakeType.ServerHello:
                 ReceiveServerHello(ServerHelloMessage.Decode(messageStream));
+                Console.WriteLine($"Received ServerHello");
                 break;
             case HandshakeType.EncryptedExtensions:
                 ReceiveEncryptedExtensions(EncryptedExtensionsMessage.Decode(messageStream));
+                Console.WriteLine($"Received EncryptedExtensions");
                 break;
             case HandshakeType.Certificate:
                 ReceiveCertificate(CertificateMessage.Decode(messageStream));
+                Console.WriteLine($"Received Certificate");
                 break;
             case HandshakeType.CertificateVerify:
                 ReceiveCertificateVerify(CertificateVerifyMessage.Decode(messageStream));
+                Console.WriteLine($"Received CertificateVerify");
                 break;
             case HandshakeType.Finished:
                 ReceiveFinished(FinishedMessage.Decode(messageStream));
+                Console.WriteLine($"Received Finished");
                 break;
             default:
                 //messageStream.Position += length;
@@ -285,33 +267,59 @@ public sealed class TlsClient {
     }
 
     void ReceiveClientHello(ClientHelloMessage message) {
+        if(State != TlsState.Start)
+            throw new QuicException();
+
         DeriveKey(message.KeyShare);
 
-        legacySessionId = message.LegacySessionId;
+        if(message.LegacySessionId.Length > 0)
+            throw new QuicException();
+
+        State = TlsState.WaitClientFinished;
     }
 
     void ReceiveServerHello(ServerHelloMessage message) {
+        if(State != TlsState.WaitServerHello)
+            throw new QuicException();
+
         DeriveKey(message.KeyShare);
 
         State = TlsState.WaitEncryptedExtensions;
     }
 
     void ReceiveEncryptedExtensions(EncryptedExtensionsMessage message) {
+        if(State != TlsState.WaitEncryptedExtensions)
+            throw new QuicException();
+
         State = TlsState.WaitCertificate;
     }
 
     void ReceiveCertificate(CertificateMessage message) {
+        if(State != TlsState.WaitCertificate)
+            throw new QuicException();
+
         remoteCertificateChain = message.CertificateChain;
 
         State = TlsState.WaitCertificateVerify;
     }
 
     void ReceiveCertificateVerify(CertificateVerifyMessage message) {
+        if(State != TlsState.WaitCertificateVerify)
+            throw new QuicException();
+
         if(!CertificateVerifyMessage.Verify(EndpointType.Server, remoteCertificateChain[0], message.Signature, messages.ToArray()))
             throw new QuicException();
+
+        State = TlsState.WaitServerFinished;
     }
 
     void ReceiveFinished(FinishedMessage message) {
+        if(State != TlsState.WaitServerFinished && State != TlsState.WaitClientFinished)
+            throw new QuicException();
+
+        if(!message.Verify(messages.ToArray(), State == TlsState.WaitServerFinished ? serverHandshakeSecret : clientHandshakeSecret))
+            throw new QuicException();
+
         State = TlsState.Connected;
     }
 
@@ -328,11 +336,11 @@ public sealed class TlsClient {
     public enum TlsState {
         Start,
         WaitServerHello,
-        WaitClientHello,
         WaitEncryptedExtensions,
         WaitCertificate,
         WaitCertificateVerify,
-        WaitFinished,
+        WaitServerFinished,
+        WaitClientFinished,
         Connected
     }
 }
