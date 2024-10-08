@@ -8,6 +8,7 @@
 - [X] TLS ClientHello and ServerHello
 - [X] QUIC Packet Protection
 - [X] TLS Handshake
+- [ ] Clean rewrite
 - [ ] Basic QUIC packet exchange
 - [ ] Throw right errors and CONNECTION_CLOSE
 - [ ] Own cryptography (ECDHE)
