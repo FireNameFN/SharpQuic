@@ -18,11 +18,13 @@ public sealed class QuicConnection {
 
     readonly QuicTransportParameters parameters;
 
-    readonly PacketWriter initialPacketWriter;
+    internal Stage initialStage;
 
-    readonly PacketWriter handshakePacketWriter;
+    internal Stage handshakeStage;
 
-    readonly PacketWriter applicationPacketWriter;
+    internal Stage applicationStage;
+
+    readonly PacketWriter packetWriter;
 
     internal readonly EndpointType endpointType;
 
@@ -46,13 +48,14 @@ public sealed class QuicConnection {
 
         parameters = configuration.Parameters;
 
-        initialPacketWriter = new(this, PacketType.Initial);
-        handshakePacketWriter = new(this, PacketType.Handshake);
-        applicationPacketWriter = new(this, 0);
+        packetWriter = new(this);
+
+        initialStage = new() {
+            KeySet = new(CipherSuite.Aes128GcmSHA256)
+        };
 
         tlsClient = new(configuration.Parameters, configuration.Protocols, configuration.CertificateChain) {
-            InitialFragmentWriter = initialPacketWriter.FrameWriter,
-            HandshakeFragmentWriter = handshakePacketWriter.FrameWriter
+            InitialFragmentWriter = initialStage.FrameWriter,
         };
 
         sourceConnectionId = configuration.Parameters.InitialSourceConnectionId;
@@ -87,14 +90,17 @@ public sealed class QuicConnection {
         return connection;
     }
 
-    public ValueTask<int> FlushAsync() {
-        MemoryStream stream = new();
+    public ValueTask<int> FlushAsync(byte[] token = null) {
+        if(initialStage is not null)
+            packetWriter.Write(PacketType.Initial, initialStage.FrameWriter.ToPayload(), token);
 
-        initialPacketWriter.CopyTo(stream);
-        handshakePacketWriter.CopyTo(stream);
-        applicationPacketWriter.CopyTo(stream);
+        if(handshakeStage is not null)
+            packetWriter.Write(PacketType.Handshake, handshakeStage.FrameWriter.ToPayload());
 
-        return client.SendAsync(stream.ToArray());
+        if(applicationStage is not null)
+            packetWriter.Write(PacketType.OneRtt, applicationStage.FrameWriter.ToPayload());
+
+        return client.SendAsync(packetWriter.ToDatagram());
     }
 
     async Task RunnerAsync() {
@@ -109,7 +115,7 @@ public sealed class QuicConnection {
                 MemoryStream stream = new(result.Buffer);
 
                 while(stream.Position < stream.Length) {
-                    Packet packet = protection.Unprotect(stream);
+                    Packet packet = protection.Unprotect(stream, initialStage.KeySet, handshakeStage?.KeySet, applicationStage?.KeySet);
 
                     if(packet is null)
                         break;
@@ -127,13 +133,13 @@ public sealed class QuicConnection {
 
                     switch(packet.PacketType) {
                         case PacketType.Initial:
-                            initialPacketWriter.Ack(packet.PacketNumber);
+                            initialStage.FrameWriter.Ack(packet.PacketNumber);
                             break;
                         case PacketType.Handshake:
-                            handshakePacketWriter.Ack(packet.PacketNumber);
+                            handshakeStage.FrameWriter.Ack(packet.PacketNumber);
                             break;
                         case PacketType.OneRtt:
-                            applicationPacketWriter.Ack(packet.PacketNumber);
+                            applicationStage.FrameWriter.Ack(packet.PacketNumber);
                             break;
                     }
 
@@ -200,20 +206,22 @@ public sealed class QuicConnection {
 
     async Task HandleHandshakeAsync() {
         if(state == State.Null && tlsClient.State >= TlsClient.TlsState.WaitEncryptedExtensions) {
+            handshakeStage = new() {
+                KeySet = new(CipherSuite.Aes128GcmSHA256)
+            };
+
+            tlsClient.HandshakeFragmentWriter = handshakeStage.FrameWriter;
+
             if(endpointType == EndpointType.Server) {
                 tlsClient.SendServerHello();
-        
-                initialPacketWriter.Write();
                 
                 tlsClient.DeriveHandshakeSecrets();
 
-                protection.GenerateKeys(tlsClient.clientHandshakeSecret, tlsClient.serverHandshakeSecret);
+                handshakeStage.KeySet.Generate(tlsClient.serverHandshakeSecret, tlsClient.clientHandshakeSecret);
 
                 Console.WriteLine("Generated handshake keys.");
 
                 tlsClient.SendServerHandshake();
-
-                handshakePacketWriter.Write();
 
                 Console.WriteLine("Sending server handshake.");
 
@@ -221,7 +229,7 @@ public sealed class QuicConnection {
             } else {
                 tlsClient.DeriveHandshakeSecrets();
 
-                protection.GenerateKeys(tlsClient.clientHandshakeSecret, tlsClient.serverHandshakeSecret);
+                handshakeStage.KeySet.Generate(tlsClient.clientHandshakeSecret, tlsClient.serverHandshakeSecret);
 
                 Console.WriteLine("Generated handshake keys.");
             }
@@ -230,17 +238,23 @@ public sealed class QuicConnection {
         }
 
         if(state == State.Connected && tlsClient.State == TlsClient.TlsState.Connected) {
+            applicationStage = new() {
+                KeySet = new(CipherSuite.Aes128GcmSHA256)
+            };
+
             if(endpointType == EndpointType.Client) {
                 tlsClient.SendClientFinished();
 
-                handshakePacketWriter.Write();
-
                 await FlushAsync();
+
+                tlsClient.DeriveApplicationSecrets();
+
+                applicationStage.KeySet.Generate(tlsClient.clientApplicationSecret, tlsClient.serverApplicationSecret);
+            } else {
+                tlsClient.DeriveApplicationSecrets();
+
+                applicationStage.KeySet.Generate(tlsClient.serverApplicationSecret, tlsClient.clientApplicationSecret);
             }
-
-            tlsClient.DeriveApplicationSecrets();
-
-            protection.GenerateKeys(tlsClient.clientApplicationSecret, tlsClient.serverApplicationSecret);
 
             ready.SetResult();
 
@@ -251,11 +265,9 @@ public sealed class QuicConnection {
     ValueTask<int> SendClientHelloAsync(byte[] token = null) {
         tlsClient.SendClientHello();
 
-        initialPacketWriter.FrameWriter.WritePaddingUntil1200();
+        initialStage.FrameWriter.WritePaddingUntil(1200);
 
-        initialPacketWriter.Write(token);
-
-        return FlushAsync();
+        return FlushAsync(token);
     }
 
     enum State {

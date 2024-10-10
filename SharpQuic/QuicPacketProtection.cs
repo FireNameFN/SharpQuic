@@ -20,29 +20,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
     bool initialKeysGenerated;
 
-    internal readonly byte[] sourceKey = new byte[16];
-
-    internal readonly byte[] sourceIv = new byte[12];
-
-    internal readonly byte[] sourceHp = new byte[16];
-
-    internal readonly byte[] destinationKey = new byte[16];
-
-    internal readonly byte[] destinationIv = new byte[12];
-
-    internal readonly byte[] destinationHp = new byte[16];
-
-    public void GenerateKeys(ReadOnlySpan<byte> clientSecret, ReadOnlySpan<byte> serverSecret) {
-        HKDFExtensions.ExpandLabel(clientSecret, "quic key", EndpointType == EndpointType.Client ? sourceKey : destinationKey);
-        HKDFExtensions.ExpandLabel(clientSecret, "quic iv", EndpointType == EndpointType.Client ? sourceIv : destinationIv);
-        HKDFExtensions.ExpandLabel(clientSecret, "quic hp", EndpointType == EndpointType.Client ? sourceHp : destinationHp);
-
-        HKDFExtensions.ExpandLabel(serverSecret, "quic key", EndpointType == EndpointType.Server ? sourceKey : destinationKey);
-        HKDFExtensions.ExpandLabel(serverSecret, "quic iv", EndpointType == EndpointType.Server ? sourceIv : destinationIv);
-        HKDFExtensions.ExpandLabel(serverSecret, "quic hp", EndpointType == EndpointType.Server ? sourceHp : destinationHp);
-    }
-
-    void GenerateInitialKeys(byte[] clientDestinationConnectionId) {
+    void GenerateInitialKeys(byte[] clientDestinationConnectionId, KeySet keySet) {
         Span<byte> initialSecret = stackalloc byte[32];
 
         HKDF.Extract(HashAlgorithmName.SHA256, clientDestinationConnectionId, InitialSalt, initialSecret);
@@ -54,19 +32,31 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
         Span<byte> serverInitialSecret = stackalloc byte[32];
 
         HKDFExtensions.ExpandLabel(initialSecret, "server in", serverInitialSecret);
-
-        GenerateKeys(clientInitialSecret, serverInitialSecret);
+        
+        if(EndpointType == EndpointType.Client)
+            keySet.Generate(clientInitialSecret, serverInitialSecret);
+        else
+            keySet.Generate(serverInitialSecret, clientInitialSecret);
 
         initialKeysGenerated = true;
     }
 
-    public byte[] Protect(Packet packet) {
+    public byte[] Protect(Packet packet, KeySet initialKeySet, KeySet handshakeKeySet, KeySet applicationKeySet) {
+        KeySet keySet = packet.PacketType switch {
+            PacketType.Initial => initialKeySet,
+            PacketType.Retry => initialKeySet,
+            PacketType.Handshake => handshakeKeySet,
+            PacketType.OneRtt => applicationKeySet,
+            PacketType.OneRttSpin => applicationKeySet,
+            _ => throw new NotImplementedException()
+        };
+
         if(!initialKeysGenerated && packet is InitialPacket)
-            GenerateInitialKeys(packet.DestinationConnectionId);
+            GenerateInitialKeys(packet.DestinationConnectionId, keySet);
 
-        Span<byte> nonce = stackalloc byte[sourceIv.Length];
+        Span<byte> nonce = stackalloc byte[keySet.SourceIv.Length];
 
-        GetNonce(sourceIv, packet.PacketNumber, nonce);
+        GetNonce(keySet.SourceIv, packet.PacketNumber, nonce);
 
         Span<byte> payload = stackalloc byte[packet.Payload.Length];
 
@@ -75,7 +65,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
         switch(CipherSuite) {
             case CipherSuite.Aes128GcmSHA256:
             case CipherSuite.Aes256GcmSHA384:
-                using(AesGcm aesGcm = new(sourceKey, 16))
+                using(AesGcm aesGcm = new(keySet.SourceKey, 16))
                     aesGcm.Encrypt(nonce, packet.Payload, payload, tag, packet.EncodeUnprotectedHeader());
 
                 break;
@@ -87,7 +77,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         Span<byte> mask = stackalloc byte[16];
 
-        GetMask(sourceHp, sample, packet.PacketType, mask);
+        GetMask(keySet.SourceHp, sample, packet.PacketType, mask);
 
         byte protectedFirstByte = (byte)(packet.GetUnprotectedFirstByte() ^ mask[0]);
 
@@ -117,16 +107,16 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
         return stream.ToArray();
     }
 
-    public Packet Unprotect(Stream stream) {
+    public Packet Unprotect(Stream stream, KeySet initialKeySet, KeySet handshakeKeySet, KeySet applicationKeySet) {
         byte protectedFirstByte = Serializer.ReadByte(stream);
 
         PacketType type = (PacketType)(protectedFirstByte & 0b11110000);
 
-        Packet packet = type switch {
-            PacketType.Initial => new InitialPacket(),
-            PacketType.Handshake => new HandshakePacket(),
-            PacketType.Retry => new RetryPacket(),
-            _ => null
+        (Packet packet, KeySet keySet) = type switch {
+            PacketType.Initial => ((Packet)new InitialPacket(), initialKeySet),
+            PacketType.Retry => (new RetryPacket(), initialKeySet),
+            PacketType.Handshake => (new HandshakePacket(), handshakeKeySet),
+            _ => (null, null)
         };
 
         if(packet is null) {
@@ -171,8 +161,8 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
                 stream.ReadExactly(initialPacket.Token);
 
-                if(EndpointType == EndpointType.Server)
-                    GenerateInitialKeys(packet.DestinationConnectionId);
+                if(!initialKeysGenerated && EndpointType == EndpointType.Server)
+                    GenerateInitialKeys(packet.DestinationConnectionId, keySet);
             } else if(packet is RetryPacket retryPacket) {
                 retryPacket.Token = new byte[stream.Length - stream.Position - 16];
 
@@ -194,7 +184,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         Span<byte> mask = stackalloc byte[16];
 
-        GetMask(destinationHp, sample, type, mask);
+        GetMask(keySet.DestinationHp, sample, type, mask);
 
         int packetNumberLength = ((protectedFirstByte ^ mask[0]) & 0b11) + 1;
 
@@ -206,9 +196,9 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         packet.PacketNumber = MaskPacketNumber(mask, packetNumberLength, packetNumberSpan);
 
-        Span<byte> nonce = stackalloc byte[destinationIv.Length];
+        Span<byte> nonce = stackalloc byte[keySet.DestinationIv.Length];
 
-        GetNonce(destinationIv, packet.PacketNumber, nonce);
+        GetNonce(keySet.DestinationIv, packet.PacketNumber, nonce);
 
         Span<byte> payload = remainder[packetNumberLength..^16];
 
@@ -217,7 +207,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
         switch(CipherSuite) {
             case CipherSuite.Aes128GcmSHA256:
             case CipherSuite.Aes256GcmSHA384:
-                using(AesGcm aesGcm = new(destinationKey, 16))
+                using(AesGcm aesGcm = new(keySet.DestinationKey, 16))
                     aesGcm.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
 
                 break;

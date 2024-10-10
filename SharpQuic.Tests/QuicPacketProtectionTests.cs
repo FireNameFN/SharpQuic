@@ -39,7 +39,7 @@ public class QuicPacketProtectionTests {
 
         QuicPacketProtection protection = new(EndpointType.Client, []);
 
-        byte[] encodedPacket = protection.Protect(packet);
+        byte[] encodedPacket = protection.Protect(packet, new(Tls.Enums.CipherSuite.Aes128GcmSHA256), null, null);
 
         string packetHex = Converter.BytesToHex(encodedPacket);
 
@@ -87,7 +87,7 @@ public class QuicPacketProtectionTests {
 
         MemoryStream stream = new(encodedPacket);
 
-        InitialPacket unprotectedPacket = (InitialPacket)destinationProtection.Unprotect(stream);
+        InitialPacket unprotectedPacket = (InitialPacket)destinationProtection.Unprotect(stream, new(Tls.Enums.CipherSuite.Aes128GcmSHA256), null, null);
 
         Assert.That(unprotectedPacket.DestinationConnectionId.SequenceEqual(packet.DestinationConnectionId));
         Assert.That(unprotectedPacket.SourceConnectionId.SequenceEqual(packet.SourceConnectionId));

@@ -23,14 +23,14 @@ public class TlsClientTests {
         FrameWriter serverInitialPacketWriter = new();
         FrameWriter serverHandshakePacketWriter = new();
 
-        TlsClient client = new(new(), ["test"]) {
+        TlsClient client = new(new() { InitialSourceConnectionId = [] }, ["test"]) {
             InitialFragmentWriter = clientInitialPacketWriter,
             HandshakeFragmentWriter = clientHandshakePacketWriter
         };
 
         client.SendClientHello();
 
-        TlsClient server = new(new(), ["test"], [certificate]) {
+        TlsClient server = new(new() { InitialSourceConnectionId = [] }, ["test"], [certificate]) {
             InitialFragmentWriter = serverInitialPacketWriter,
             HandshakeFragmentWriter = serverHandshakePacketWriter
         };

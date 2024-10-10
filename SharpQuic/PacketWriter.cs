@@ -10,29 +10,13 @@ public sealed class PacketWriter {
 
     readonly MemoryStream stream = new();
 
-    readonly PacketType type;
+    uint nextPacketNumber; // TODO
 
-    uint nextPacketNumber;
-
-    public FrameWriter FrameWriter { get; } = new();
-
-    readonly SortedSet<uint> acks = [];
-
-    internal PacketWriter(QuicConnection connection, PacketType type) {
+    internal PacketWriter(QuicConnection connection) {
         this.connection = connection;
-        this.type = type;
     }
 
-    public void Ack(uint packetNumber) {
-        acks.Add(packetNumber);
-    }
-
-    public void Write(byte[] token = null) {
-        if(acks.Count > 0) {
-            FrameWriter.WriteAck(acks);
-            acks.Clear();
-        }
-
+    public void Write(PacketType type, byte[] payload, byte[] token = null) {
         Packet packet = type switch {
             PacketType.Initial => new InitialPacket() { Token = token ?? [] },
             PacketType.Handshake => new HandshakePacket(),
@@ -42,18 +26,26 @@ public sealed class PacketWriter {
 
         if(packet is LongHeaderPacket longHeaderPacket)
             longHeaderPacket.SourceConnectionId = connection.sourceConnectionId;
-            
+        
         packet.DestinationConnectionId = connection.destinationConnectionId;
         packet.PacketNumber = nextPacketNumber++;
-        packet.Payload = FrameWriter.ToPayload();
+        packet.Payload = payload;
 
-        stream.Write(connection.protection.Protect(packet));
+        stream.Write(connection.protection.Protect(packet, connection.initialStage.KeySet, connection.handshakeStage?.KeySet, connection.applicationStage?.KeySet));
     }
 
-    public void CopyTo(Stream stream) {
+    public byte[] ToDatagram() {
+        byte[] datagram = stream.ToArray();
+
+        stream.SetLength(0);
+
+        return datagram;
+    }
+
+    /*public void CopyTo(Stream stream) {
         this.stream.Position = 0;
         this.stream.CopyTo(stream);
         //this.stream.Position = 0;
         this.stream.SetLength(0);
-    }
+    }*/
 }

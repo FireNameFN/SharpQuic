@@ -8,16 +8,32 @@ namespace SharpQuic;
 public sealed class FrameWriter : IFragmentWriter {
     readonly MemoryStream stream = new();
 
+    readonly SortedSet<uint> acks = [];
+
+    public void Ack(uint packetNumber) {
+        acks.Add(packetNumber);
+    }
+
     public byte[] ToPayload() {
+        if(acks.Count > 0) {
+            WriteAck(acks);
+            acks.Clear();
+        }
+
+        WritePaddingUntil(20);
+
         byte[] payload = stream.ToArray();
 
-        stream.Position = 0;
+        stream.SetLength(0);
 
         return payload;
     }
 
-    public void WritePaddingUntil1200() {
-        Span<byte> padding = stackalloc byte[1200 - (int)stream.Position];
+    public void WritePaddingUntil(int length) {
+        if(length <= stream.Length)
+            return;
+
+        Span<byte> padding = stackalloc byte[length - (int)stream.Position];
         
         stream.Write(padding);
     }
