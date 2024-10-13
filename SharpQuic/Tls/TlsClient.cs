@@ -69,7 +69,7 @@ public sealed class TlsClient {
     public void DeriveHandshakeSecrets() {
         hash = new byte[32];
 
-        HKDF.Extract(HashAlgorithmName.SHA256, hash, [], hash);
+        HKDF.Extract(HashAlgorithmName.SHA256, hash, hash, hash);
 
         HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "derived", SHA256.HashData([]), hash);
 
@@ -92,11 +92,11 @@ public sealed class TlsClient {
     }
 
     public void DeriveApplicationSecrets() {
-        HKDFExtensions.ExpandLabel(hash, "derived", hash);
-
-        HKDF.Extract(HashAlgorithmName.SHA256, [], hash, hash);
+        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "derived", SHA256.HashData([]), hash);
 
         Span<byte> messagesHash = stackalloc byte[32];
+
+        HKDF.Extract(HashAlgorithmName.SHA256, messagesHash, hash, hash);
 
         SHA256.HashData(messages.ToArray(), messagesHash);
 
@@ -108,7 +108,6 @@ public sealed class TlsClient {
 
         HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "s ap traffic", messagesHash, serverApplicationSecret);
 
-        messages = null;
         hash = null;
     }
 
@@ -208,7 +207,8 @@ public sealed class TlsClient {
         if(message is ClientHelloMessage)
             messages.SetLength(0);
 
-        messages.Write(array);
+        if(State != TlsState.Connected || message is not FinishedMessage)
+            messages.Write(array);
 
         return array;
     }
@@ -228,6 +228,8 @@ public sealed class TlsClient {
     public void ReceiveHandshake(HandshakeType type, byte[] data) {
         MemoryStream messageStream = new(data);
 
+        TlsState state = State;
+
         switch(type) {
             case HandshakeType.ClientHello:
                 ReceiveClientHello(ClientHelloMessage.Decode(messageStream));
@@ -236,6 +238,8 @@ public sealed class TlsClient {
             case HandshakeType.ServerHello:
                 ReceiveServerHello(ServerHelloMessage.Decode(messageStream));
                 Console.WriteLine($"Received ServerHello");
+                break;
+            case HandshakeType.NewSessionTicket:
                 break;
             case HandshakeType.EncryptedExtensions:
                 ReceiveEncryptedExtensions(EncryptedExtensionsMessage.Decode(messageStream));
@@ -259,9 +263,11 @@ public sealed class TlsClient {
                 //break;
         }
 
-        Serializer.WriteByte(messages, (byte)type);
-        Serializer.WriteByte(messages, 0);
-        Serializer.WriteUInt16(messages, (ushort)data.Length);
+        if(state != TlsState.WaitClientFinished) {
+            Serializer.WriteByte(messages, (byte)type);
+            Serializer.WriteByte(messages, 0);
+            Serializer.WriteUInt16(messages, (ushort)data.Length);
+        }
 
         messages.Write(data);
     }

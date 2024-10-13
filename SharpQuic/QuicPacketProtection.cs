@@ -112,12 +112,18 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         PacketType type = (PacketType)(protectedFirstByte & 0b11110000);
 
-        (Packet packet, KeySet keySet) = type switch {
-            PacketType.Initial => ((Packet)new InitialPacket(), initialKeySet),
-            PacketType.Retry => (new RetryPacket(), initialKeySet),
-            PacketType.Handshake => (new HandshakePacket(), handshakeKeySet),
-            _ => (null, null)
+        Packet packet = type switch {
+            PacketType.Initial => new InitialPacket(),
+            PacketType.Retry => new RetryPacket(),
+            PacketType.Handshake => new HandshakePacket(),
+            _ => null
         };
+
+        if(packet is InitialPacket && initialKeySet is null)
+            return null;
+
+        if(packet is HandshakePacket && handshakeKeySet is null)
+            return null;
 
         if(packet is null) {
             type = (PacketType)(protectedFirstByte & 0b11100000);
@@ -132,6 +138,14 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
             if(packet is null)
                 return null;
         }
+
+        KeySet keySet = packet switch {
+            InitialPacket => initialKeySet,
+            RetryPacket => null,
+            HandshakePacket => handshakeKeySet,
+            OneRttPacket => applicationKeySet,
+            _ => throw new NotImplementedException()
+        };
 
         int destinationConnectionIdLength;
 
@@ -174,7 +188,12 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
             }
         }
 
-        (ulong length, packet.LengthLength) = Serializer.ReadVariableLength(stream);
+        ulong length;
+
+        if(packet is LongHeaderPacket)
+            (length, packet.LengthLength) = Serializer.ReadVariableLength(stream);
+        else
+            length = (ulong)(stream.Length - stream.Position);
 
         Span<byte> remainder = stackalloc byte[(int)length];
 
@@ -186,7 +205,9 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         GetMask(keySet.DestinationHp, sample, type, mask);
 
-        int packetNumberLength = ((protectedFirstByte ^ mask[0]) & 0b11) + 1;
+        protectedFirstByte ^= mask[0];
+
+        int packetNumberLength = (protectedFirstByte & 0b11) + 1;
 
         Span<byte> packetNumberSpan = stackalloc byte[sizeof(uint)];
 
@@ -195,6 +216,11 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
         packet.PacketNumberLength = packetNumberLength;
 
         packet.PacketNumber = MaskPacketNumber(mask, packetNumberLength, packetNumberSpan);
+
+        if(packet is OneRttPacket oneRttPacket) {
+            oneRttPacket.Spin = (protectedFirstByte & 0b00100000) != 0;
+            oneRttPacket.KeyPhase = (protectedFirstByte & 0b00000100) != 0;
+        }
 
         Span<byte> nonce = stackalloc byte[keySet.DestinationIv.Length];
 

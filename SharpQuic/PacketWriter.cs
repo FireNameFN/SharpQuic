@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using SharpQuic.Packets;
 
@@ -10,13 +9,11 @@ public sealed class PacketWriter {
 
     readonly MemoryStream stream = new();
 
-    uint nextPacketNumber; // TODO
-
     internal PacketWriter(QuicConnection connection) {
         this.connection = connection;
     }
 
-    public void Write(PacketType type, byte[] payload, byte[] token = null) {
+    public void Write(PacketType type, uint packetNumber, byte[] payload, byte[] token) {
         Packet packet = type switch {
             PacketType.Initial => new InitialPacket() { Token = token ?? [] },
             PacketType.Handshake => new HandshakePacket(),
@@ -28,10 +25,10 @@ public sealed class PacketWriter {
             longHeaderPacket.SourceConnectionId = connection.sourceConnectionId;
         
         packet.DestinationConnectionId = connection.destinationConnectionId;
-        packet.PacketNumber = nextPacketNumber++;
+        packet.PacketNumber = packetNumber;
         packet.Payload = payload;
 
-        stream.Write(connection.protection.Protect(packet, connection.initialStage.KeySet, connection.handshakeStage?.KeySet, connection.applicationStage?.KeySet));
+        stream.Write(connection.protection.Protect(packet, connection.initialStage?.KeySet, connection.handshakeStage?.KeySet, connection.applicationStage?.KeySet));
     }
 
     public byte[] ToDatagram() {

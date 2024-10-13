@@ -34,6 +34,16 @@ public static class Serializer {
         stream.Write(span[^length..]);
     }
 
+    public static int GetVariableLength(ulong value) {
+        return value switch {
+            < 1 << 6 => 1,
+            < 1 << 14 => 2,
+            < 1 << 30 => 4,
+            < 1ul << 62 => 8,
+            _ => throw new ArgumentOutOfRangeException(nameof(value))
+        };
+    }
+
     public static void WriteVariableLength(Stream stream, ulong value, int length = 0) {
         int bits;
 

@@ -28,16 +28,22 @@ public class Packet {
     }
 
     public byte GetUnprotectedFirstByte() {
-        return (byte)((byte)PacketType | GetPacketNumberLength() - 1);
+        int firstByte = (byte)PacketType | GetPacketNumberLength() - 1;
+
+        if(this is OneRttPacket oneRttPacket)
+            firstByte |= (oneRttPacket.Spin ? 0b00100000 : 0) | (oneRttPacket.KeyPhase ? 0b00000100 : 0);
+
+        return (byte)firstByte;
     }
 
     public byte[] EncodePublicHeader() {
         MemoryStream stream = new();
 
-        if(this is LongHeaderPacket)
+        if(this is LongHeaderPacket) {
             Serializer.WriteUInt32(stream, 1);
 
-        Serializer.WriteByte(stream, (byte)DestinationConnectionId.Length);
+            Serializer.WriteByte(stream, (byte)DestinationConnectionId.Length);
+        }
 
         stream.Write(DestinationConnectionId);
 
@@ -48,9 +54,9 @@ public class Packet {
 
             if(this is InitialPacket initialPacket)
                 initialPacket.EncodeToken(stream);
+                
+            Serializer.WriteVariableLength(stream, (ulong)(GetPacketNumberLength() + Payload.Length + 16), LengthLength ?? 0);
         }
-
-        Serializer.WriteVariableLength(stream, (ulong)(GetPacketNumberLength() + Payload.Length + 16), LengthLength ?? 0);
 
         return stream.ToArray();
     }

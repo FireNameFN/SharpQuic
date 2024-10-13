@@ -14,6 +14,18 @@ public static class QuicTransportParametersExtension {
             parametersStream.Write(parameters.OriginalDestinationConnectionId);
         }
 
+        EncodeParameter(parametersStream, 0x04, parameters.InitialMaxData);
+
+        EncodeParameter(parametersStream, 0x05, parameters.InitialMaxStreamDataBidiLocal);
+
+        EncodeParameter(parametersStream, 0x06, parameters.InitialMaxStreamDataBidiRemote);
+
+        EncodeParameter(parametersStream, 0x07, parameters.InitialMaxStreamDataUni);
+
+        EncodeParameter(parametersStream, 0x08, parameters.InitialMaxStreamsBidi);
+
+        EncodeParameter(parametersStream, 0x09, parameters.InitialMaxStreamsUni);
+
         Serializer.WriteVariableLength(parametersStream, 0x0f);
         Serializer.WriteVariableLength(parametersStream, (ulong)parameters.InitialSourceConnectionId.Length);
         parametersStream.Write(parameters.InitialSourceConnectionId);
@@ -23,5 +35,13 @@ public static class QuicTransportParametersExtension {
         parametersStream.Position = 0;
 
         parametersStream.CopyTo(stream);
+    }
+
+    static void EncodeParameter(Stream stream, ulong id, ulong value) {
+        int length = Serializer.GetVariableLength(value);
+
+        Serializer.WriteVariableLength(stream, id);
+        Serializer.WriteVariableLength(stream, (ulong)length);
+        Serializer.WriteVariableLength(stream, value, length);
     }
 }

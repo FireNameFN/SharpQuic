@@ -52,16 +52,6 @@ public class QuicConnectionTests {
     }
 
     [Test, Explicit]
-    public async Task ConnectToDoQServerTestAsync() {
-        IPHostEntry entry = await Dns.GetHostEntryAsync("dns.adguard-dns.com");
-        
-        await QuicConnection.ConnectAsync(new() {
-            Point = new(entry.AddressList[0], 853),
-            Protocols = ["doq"]
-        });
-    }
-
-    [Test, Explicit]
     public async Task ConnectToExternalServerTestAsync() {
         await QuicConnection.ConnectAsync(new() {
             Point = IPEndPoint.Parse("127.0.0.1:853"),
