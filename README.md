@@ -4,12 +4,15 @@
 > [!WARNING]
 > Not ready for use. Work in progress.
 
+## State
+We can connect to AdGuard DoQ server and receive some addresses.
+
 ## Tasks
 - [X] TLS ClientHello and ServerHello
 - [X] QUIC Packet Protection
 - [X] TLS Handshake
 - [ ] Clean rewrite
-- [ ] Basic QUIC packet exchange
+- [X] Basic QUIC packet exchange
 - [ ] Throw right errors and CONNECTION_CLOSE
 - [ ] Own cryptography (ECDHE)
 - [ ] ...
