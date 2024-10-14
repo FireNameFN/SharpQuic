@@ -20,37 +20,35 @@ public class DoqTests {
 
         QuicStream stream = connection.OpenBidirectionalStream();
 
-        Request request = new();
-
-        request.RecursionDesired = true;
-        request.Id = 0;
-        request.Questions.Add(new(new("dns.adguard-dns.com")));
+        Request request = new() {
+            Id = 0,
+            RecursionDesired = true,
+            Questions = {
+                new(new("dns.adguard-dns.com"))
+            }
+        };
 
         Console.WriteLine(request);
 
         byte[] data = request.ToArray();
 
-        byte[] length = new byte[sizeof(ushort)];
+        byte[] lengthArray = new byte[sizeof(ushort)];
 
-        BinaryPrimitives.WriteUInt16BigEndian(length, (ushort)data.Length);
+        BinaryPrimitives.WriteUInt16BigEndian(lengthArray, (ushort)data.Length);
 
-        await stream.WriteAsync([..length, ..data], true);
+        await stream.WriteAsync([..lengthArray, ..data], true);
 
-        await Task.Delay(200);
+        await stream.ReadAsync(lengthArray);
 
-        data = await connection.data.Task;
+        int length = BinaryPrimitives.ReadUInt16BigEndian(lengthArray);
 
-        data = data[2..];
+        data = new byte[length];
+
+        await stream.ReadAsync(data);
 
         Response response = Response.FromArray(data);
 
         Console.WriteLine(response);
-
-        //await stream.WriteAsync(request.ToArray());
-
-        await Task.Delay(1500);
-
-        //await Task.Delay(5000);
     }
 
     [Test, Explicit]

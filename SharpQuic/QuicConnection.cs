@@ -4,6 +4,7 @@ using System.IO;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
+using SharpQuic.Frames;
 using SharpQuic.Packets;
 using SharpQuic.Tls;
 using SharpQuic.Tls.Enums;
@@ -45,6 +46,8 @@ public sealed class QuicConnection {
     MemoryStream cryptoStream = new();
 
     readonly ulong[] nextStreamIds = new ulong[2];
+
+    readonly Dictionary<ulong, QuicStream> streams = [];
 
     QuicConnection(EndpointType endpointType, UdpClient client, QuicConfiguration configuration) {
         this.client = client;
@@ -98,13 +101,21 @@ public sealed class QuicConnection {
     public QuicStream OpenBidirectionalStream() {
         ulong id = nextStreamIds[0]++;
 
-        return new(this, id << 2 | (endpointType == EndpointType.Client ? 0u : 1u));
+        QuicStream stream = new(this, id << 2 | (endpointType == EndpointType.Client ? 0u : 1u));
+
+        streams.Add(stream.Id, stream);
+
+        return stream;
     }
 
     public QuicStream OpenUnidirectionalStream() {
         ulong id = nextStreamIds[1]++;
 
-        return new(this, id << 2 | 0b10 | (endpointType == EndpointType.Client ? 0u : 1u));
+        QuicStream stream = new(this, id << 2 | 0b10 | (endpointType == EndpointType.Client ? 0u : 1u));
+
+        streams.Add(stream.Id, stream);
+
+        return stream;
     }
 
     public ValueTask<int> FlushAsync(byte[] token = null) {
@@ -178,9 +189,6 @@ public sealed class QuicConnection {
 
                     await FlushAsync();
                 }
-
-                if(state == State.Idle && !ready.Task.IsCompleted)
-                    ready.SetResult();
             }
         } catch(Exception e) {
             Console.WriteLine(e);
@@ -207,8 +215,8 @@ public sealed class QuicConnection {
         while(reader.stream.Position < reader.stream.Length) {
             Frame frame = reader.Read();
 
-            switch(frame.Type) {
-                case FrameType.Crypto:
+            switch(frame) {
+                case CryptoFrame cryptoFrame:
                     if(handshakeStage is not null && packet is InitialPacket || applicationStage is not null && packet is HandshakePacket)
                         break;
 
@@ -216,7 +224,7 @@ public sealed class QuicConnection {
 
                     cryptoStream.Position = cryptoStream.Length;
 
-                    cryptoStream.Write(frame.Data);
+                    cryptoStream.Write(cryptoFrame.Data);
 
                     cryptoStream.Position = position;
 
@@ -242,14 +250,18 @@ public sealed class QuicConnection {
                     }
 
                     break;
-                case FrameType.Stream:
-                    data.SetResult(frame.Data);
+                case StreamFrame streamFrame:
+                    streams[streamFrame.Id].Put(streamFrame.Data, streamFrame.Offset);
+
+                    //data.SetResult(frame.Data);
+                    //streams[]
+
                     break;
-                case FrameType.NewConnectionId:
+                case NewConnectionIdFrame:
                     //destinationConnectionId = frame.Data;
 
                     break;
-                case FrameType.HandshakeDone:
+                case HandshakeDoneFrame:
                     break;
             }
         }
@@ -311,7 +323,7 @@ public sealed class QuicConnection {
 
             //handshakeStage = null;
 
-            //ready.SetResult();
+            ready.SetResult();
 
             state = State.Idle;
         }

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using SharpQuic.Frames;
 
 namespace SharpQuic;
 
@@ -14,7 +15,7 @@ public sealed class FrameReader {
             Console.WriteLine($"Frame {type}");
 
         return type switch {
-            0 => new(0, null),
+            0 => null,
             FrameType.Ack => ReadAck(),
             FrameType.Crypto => ReadCrypto(),
             FrameType.NewToken => ReadNewToken(),
@@ -23,7 +24,7 @@ public sealed class FrameReader {
             FrameType.NewConnectionId => ReadNewConnectionId(),
             FrameType.ConnectionClose => ReadConnectionClose(false),
             FrameType.ConnectionClose2 => ReadConnectionClose(true),
-            FrameType.HandshakeDone => new(FrameType.HandshakeDone, null),
+            FrameType.HandshakeDone => new HandshakeDoneFrame(),
             _ => throw new QuicException()
         };
     }
@@ -39,7 +40,7 @@ public sealed class FrameReader {
             Serializer.ReadVariableLength(stream);
         }
 
-        return new(FrameType.Ack, null);
+        return new AckFrame();
     }
 
     Frame ReadCrypto() {
@@ -51,7 +52,11 @@ public sealed class FrameReader {
 
         stream.ReadExactly(data);
 
-        return new(FrameType.Crypto, data);
+        return new CryptoFrame() {
+            Offset = offset,
+            Length = length,
+            Data = data
+        };
     }
 
     Frame ReadNewToken() {
@@ -59,15 +64,15 @@ public sealed class FrameReader {
 
         stream.Position += (long)length;
 
-        return new(FrameType.NewToken, null);
+        return new HandshakeDoneFrame();
     }
 
     Frame ReadStream(FrameType type) {
         ulong id = Serializer.ReadVariableLength(stream).Value;
 
-        ulong offset;
+        ulong offset = 0;
 
-        ulong length = 0;
+        ulong length = (ulong)(stream.Length - stream.Position);
 
         if(type.HasFlag(FrameType.StreamOffset))
             offset = Serializer.ReadVariableLength(stream).Value;
@@ -75,17 +80,22 @@ public sealed class FrameReader {
         if(type.HasFlag(FrameType.StreamLength))
             length = Serializer.ReadVariableLength(stream).Value;
 
-        byte[] data = new byte[length > 0 ? (int)length : (stream.Length - stream.Position)];
+        byte[] data = new byte[length];
 
         stream.ReadExactly(data);
 
-        return new(FrameType.Stream, data);
+        return new StreamFrame() {
+            Id = id,
+            Offset = offset,
+            Length = length,
+            Data = data
+        };
     }
 
     Frame ReadMaxStreams() {
         Serializer.ReadVariableLength(stream);
 
-        return new(FrameType.MaxStreams, null);
+        return new HandshakeDoneFrame();
     }
 
     Frame ReadNewConnectionId() {
@@ -101,7 +111,7 @@ public sealed class FrameReader {
         
         stream.Position += 16;
 
-        return new(FrameType.NewConnectionId, connectionId);
+        return new NewConnectionIdFrame();
     }
 
     Frame ReadConnectionClose(bool application) {
@@ -119,6 +129,6 @@ public sealed class FrameReader {
 
         throw new QuicException();
 
-        return new(FrameType.ConnectionClose, null);
+        //return new(FrameType.ConnectionClose, null);
     }
 }

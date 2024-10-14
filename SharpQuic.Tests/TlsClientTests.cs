@@ -4,6 +4,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using NUnit.Framework;
+using SharpQuic.Frames;
 using SharpQuic.Tls;
 using SharpQuic.Tls.Enums;
 
@@ -38,7 +39,7 @@ public class TlsClientTests {
             stream = new MemoryStream(clientInitialPacketWriter.ToPayload())
         };
 
-        byte[] data = reader.Read().Data;
+        byte[] data = ((CryptoFrame)reader.Read()).Data;
 
         server.ReceiveHandshake(TlsClient.ReadHandshakeHeader(data[..4]).Type, data[4..]);
 
@@ -46,7 +47,7 @@ public class TlsClientTests {
 
         reader.stream = new MemoryStream(serverInitialPacketWriter.ToPayload());
 
-        MemoryStream stream = new(reader.Read().Data);
+        MemoryStream stream = new(((CryptoFrame)reader.Read()).Data);
 
         while(stream.Position < stream.Length) {
             data = new byte[4];
@@ -74,7 +75,7 @@ public class TlsClientTests {
 
         reader.stream = new MemoryStream(serverHandshakePacketWriter.ToPayload());
 
-        stream = new(reader.Read().Data);
+        stream = new(((CryptoFrame)reader.Read()).Data);
 
         while(stream.Position < stream.Length) {
             data = new byte[4];

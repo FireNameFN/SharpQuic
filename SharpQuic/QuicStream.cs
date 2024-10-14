@@ -1,5 +1,4 @@
 using System;
-using System.Buffers.Binary;
 using System.Threading.Tasks;
 
 namespace SharpQuic;
@@ -8,6 +7,8 @@ public sealed class QuicStream {
     public ulong Id { get; }
 
     readonly QuicConnection connection;
+
+    readonly CutStream stream = new(1024);
 
     ulong offset;
 
@@ -26,5 +27,13 @@ public sealed class QuicStream {
         Console.WriteLine($"Stream Write {data.Length}");
 
         return connection.FlushAsync().AsTask();
+    }
+
+    public Task ReadAsync(Memory<byte> memory) {
+        return stream.ReadAsync(memory);
+    }
+
+    internal void Put(ReadOnlySpan<byte> data, ulong offset) {
+        stream.Write(data, offset);
     }
 }

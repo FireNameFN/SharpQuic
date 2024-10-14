@@ -2,7 +2,7 @@ using System.IO;
 
 namespace SharpQuic.Packets;
 
-public class Packet {
+public abstract class Packet {
     public PacketType PacketType { get; protected set; }
 
     public byte[] DestinationConnectionId { get; set; }
