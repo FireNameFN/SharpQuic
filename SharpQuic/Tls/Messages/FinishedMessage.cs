@@ -47,10 +47,6 @@ public sealed class FinishedMessage : IMessage {
 
         HKDFExtensions.ExpandLabel(handshakeSecret, "finished", key);
 
-        Span<byte> hash = stackalloc byte[32];
-
-        SHA256.HashData(messages, hash);
-
-        HMACSHA256.HashData(key, hash, data);
+        HMACSHA256.HashData(key, messages, data);
     }
 }

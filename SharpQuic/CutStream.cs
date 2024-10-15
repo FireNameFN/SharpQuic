@@ -89,7 +89,7 @@ public sealed class CutStream(int bufferLength) {
                 regions.RemoveAt(0);
 
                 if(readSemaphore.CurrentCount > 0)
-                    readSemaphore.Wait();
+                    await readSemaphore.WaitAsync();
             } else if(readSemaphore.CurrentCount < 1)
                 readSemaphore.Release();
 

@@ -89,11 +89,7 @@ public sealed class CertificateVerifyMessage : IMessage {
     }
 
     static byte[] GetSignature(EndpointType endpointType, ReadOnlySpan<byte> messages) {
-        Span<byte> hash = stackalloc byte[32];
-
-        SHA256.HashData(messages, hash);
-
-        Span<byte> signature = [..(endpointType == EndpointType.Client ? ClientSignatureStart : ServerSignatureStart), ..hash];
+        Span<byte> signature = [..(endpointType == EndpointType.Client ? ClientSignatureStart : ServerSignatureStart), ..messages];
 
         return SHA256.HashData(signature);
     }

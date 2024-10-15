@@ -12,7 +12,7 @@ using SharpQuic.Tls.Enums;
 namespace SharpQuic;
 
 public sealed class QuicConnection {
-    readonly UdpClient client;
+    readonly UdpClient client = new();
 
     readonly TlsClient tlsClient;
 
@@ -49,8 +49,7 @@ public sealed class QuicConnection {
 
     readonly Dictionary<ulong, QuicStream> streams = [];
 
-    QuicConnection(EndpointType endpointType, UdpClient client, QuicConfiguration configuration) {
-        this.client = client;
+    QuicConnection(EndpointType endpointType, QuicConfiguration configuration) {
         this.endpointType = endpointType;
         protection = new(endpointType, configuration.Parameters.InitialSourceConnectionId);
 
@@ -73,7 +72,7 @@ public sealed class QuicConnection {
     public static async Task<QuicConnection> ConnectAsync(QuicConfiguration configuration) {
         configuration.Parameters.InitialSourceConnectionId = RandomNumberGenerator.GetBytes(8);
 
-        QuicConnection connection = new(EndpointType.Client, new(), configuration);
+        QuicConnection connection = new(EndpointType.Client, configuration);
 
         connection.client.Connect(configuration.Point);
 
@@ -89,7 +88,9 @@ public sealed class QuicConnection {
     public static async Task<QuicConnection> ListenAsync(QuicConfiguration configuration) {
         configuration.Parameters.InitialSourceConnectionId = RandomNumberGenerator.GetBytes(8);
 
-        QuicConnection connection = new(EndpointType.Server, new(configuration.Point), configuration);
+        QuicConnection connection = new(EndpointType.Server, configuration);
+
+        connection.client.Client.Bind(configuration.Point);
 
         await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
 
@@ -134,11 +135,13 @@ public sealed class QuicConnection {
         try {
             while(true) {
                 Console.WriteLine("Receiving");
+
                 UdpReceiveResult result = await client.ReceiveAsync();
 
                 Console.WriteLine($"Received datagram: {result.Buffer.Length}");
 
-                client.Connect(result.RemoteEndPoint);
+                if(state == State.Null && endpointType == EndpointType.Server)
+                    client.Connect(result.RemoteEndPoint);
 
                 MemoryStream stream = new(result.Buffer);
 
@@ -166,24 +169,8 @@ public sealed class QuicConnection {
                         }
                     } else
                         Console.WriteLine($"Retry packet");
-
-                    if(state == State.Null && endpointType == EndpointType.Server && packet is InitialPacket) {
-                        parameters.OriginalDestinationConnectionId = packet.DestinationConnectionId;
-                    }
                     
                     await HandlePacketAsync(packet);
-
-                    switch(packet.PacketType) {
-                        case PacketType.Initial:
-                            initialStage.FrameWriter.Ack(packet.PacketNumber);
-                            break;
-                        case PacketType.Handshake:
-                            handshakeStage.FrameWriter.Ack(packet.PacketNumber);
-                            break;
-                        case PacketType.OneRtt:
-                            applicationStage.FrameWriter.Ack(packet.PacketNumber);
-                            break;
-                    }
 
                     await HandleHandshakeAsync();
 
@@ -205,15 +192,31 @@ public sealed class QuicConnection {
             return;
         }
 
-        if(state == State.Null && packet is InitialPacket initialPacket)
+        if(state == State.Null && packet is InitialPacket initialPacket) {
             destinationConnectionId = initialPacket.SourceConnectionId;
+
+            if(endpointType == EndpointType.Server)
+                parameters.OriginalDestinationConnectionId = packet.DestinationConnectionId;
+        }
 
         FrameReader reader = new() {
             stream = new MemoryStream(packet.Payload)
         };
 
+        bool ackEliciting = false;
+
         while(reader.stream.Position < reader.stream.Length) {
             Frame frame = reader.Read();
+
+            switch(frame?.Type) {
+                case null:
+                case FrameType.Ack:
+                case FrameType.ConnectionClose:
+                    break;
+                default:
+                    ackEliciting = true;
+                    break;
+            }
 
             switch(frame) {
                 case CryptoFrame cryptoFrame:
@@ -264,6 +267,18 @@ public sealed class QuicConnection {
                 case HandshakeDoneFrame:
                     break;
             }
+        }
+
+        switch(packet.PacketType) {
+            case PacketType.Initial:
+                initialStage.Ack(packet.PacketNumber, ackEliciting);
+                break;
+            case PacketType.Handshake:
+                handshakeStage.Ack(packet.PacketNumber, ackEliciting);
+                break;
+            case PacketType.OneRtt:
+                applicationStage.Ack(packet.PacketNumber, ackEliciting);
+                break;
         }
     }
 

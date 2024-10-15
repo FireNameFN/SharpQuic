@@ -77,7 +77,7 @@ public sealed class TlsClient {
 
         Span<byte> messagesHash = stackalloc byte[32];
 
-        SHA256.HashData(messages.ToArray(), messagesHash);
+        GetMessagesHash(messagesHash);
 
         clientHandshakeSecret = new byte[32];
 
@@ -98,7 +98,7 @@ public sealed class TlsClient {
 
         HKDF.Extract(HashAlgorithmName.SHA256, messagesHash, hash, hash);
 
-        SHA256.HashData(messages.ToArray(), messagesHash);
+        GetMessagesHash(messagesHash);
 
         clientApplicationSecret = new byte[32];
 
@@ -166,12 +166,12 @@ public sealed class TlsClient {
         stream.Write(GetHandshake(certificateMessage));
 
         if(certificateChain.Length > 0) {
-            CertificateVerifyMessage certificateVerifyMessage = CertificateVerifyMessage.Create(EndpointType.Server, messages.ToArray(), certificateChain[0]);
+            CertificateVerifyMessage certificateVerifyMessage = CertificateVerifyMessage.Create(EndpointType.Server, GetMessagesHash(), certificateChain[0]);
 
             stream.Write(GetHandshake(certificateVerifyMessage));
         }
 
-        FinishedMessage finishedMessage = FinishedMessage.Create(messages.ToArray(), serverHandshakeSecret);
+        FinishedMessage finishedMessage = FinishedMessage.Create(GetMessagesHash(), serverHandshakeSecret);
 
         stream.Write(GetHandshake(finishedMessage));
 
@@ -181,7 +181,7 @@ public sealed class TlsClient {
     }
 
     public void SendClientFinished() {
-        FinishedMessage finishedMessage = FinishedMessage.Create(messages.ToArray(), clientHandshakeSecret);
+        FinishedMessage finishedMessage = FinishedMessage.Create(GetMessagesHash(), clientHandshakeSecret);
 
         HandshakeFragmentWriter.WriteFragment(GetHandshake(finishedMessage));
     }
@@ -265,11 +265,12 @@ public sealed class TlsClient {
 
         if(state != TlsState.WaitClientFinished) {
             Serializer.WriteByte(messages, (byte)type);
+
             Serializer.WriteByte(messages, 0);
             Serializer.WriteUInt16(messages, (ushort)data.Length);
-        }
 
-        messages.Write(data);
+            messages.Write(data);
+        }
     }
 
     void ReceiveClientHello(ClientHelloMessage message) {
@@ -313,7 +314,7 @@ public sealed class TlsClient {
         if(State != TlsState.WaitCertificateVerify)
             throw new QuicException();
 
-        if(!CertificateVerifyMessage.Verify(EndpointType.Server, remoteCertificateChain[0], message.Signature, messages.ToArray()))
+        if(!CertificateVerifyMessage.Verify(EndpointType.Server, remoteCertificateChain[0], message.Signature, GetMessagesHash()))
             throw new QuicException();
 
         State = TlsState.WaitServerFinished;
@@ -323,7 +324,7 @@ public sealed class TlsClient {
         if(State != TlsState.WaitServerFinished && State != TlsState.WaitClientFinished)
             throw new QuicException();
 
-        if(!message.Verify(messages.ToArray(), State == TlsState.WaitServerFinished ? serverHandshakeSecret : clientHandshakeSecret))
+        if(!message.Verify(GetMessagesHash(), State == TlsState.WaitServerFinished ? serverHandshakeSecret : clientHandshakeSecret))
             throw new QuicException();
 
         State = TlsState.Connected;
@@ -337,6 +338,24 @@ public sealed class TlsClient {
         agreement.Init(keyPair.Private);
 
         agreement.CalculateAgreement(key, this.key);
+    }
+
+    byte[] GetMessagesHash() {
+        messages.Position = 0;
+
+        byte[] hash = SHA256.HashData(messages);
+
+        messages.Position = messages.Length;
+
+        return hash;
+    }
+
+    void GetMessagesHash(Span<byte> hash) {
+        messages.Position = 0;
+
+        SHA256.HashData(messages, hash);
+
+        messages.Position = messages.Length;
     }
 
     public enum TlsState {

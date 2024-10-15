@@ -9,24 +9,9 @@ namespace SharpQuic;
 public sealed class FrameWriter : IFragmentWriter {
     readonly MemoryStream stream = new();
 
-    readonly SortedSet<uint> acks = [];
-
-    public bool HasPayload => stream.Length > 0 || acks.Count > 0;
-
-    //bool ackEliciting;
-
-    public void Ack(uint packetNumber) {
-        acks.Add(packetNumber);
-    }
+    public bool HasPayload => stream.Length > 0;
 
     public byte[] ToPayload() {
-        if(acks.Count > 0) {
-            WriteAck(acks);
-            acks.Clear();
-        }
-
-        WritePaddingUntil(20);
-
         byte[] payload = stream.ToArray();
 
         stream.SetLength(0);
