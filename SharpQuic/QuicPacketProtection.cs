@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading.Tasks;
 using SharpQuic.Packets;
 using SharpQuic.Tls;
 using SharpQuic.Tls.Enums;
@@ -107,7 +108,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
         return stream.ToArray();
     }
 
-    public Packet Unprotect(Stream stream, KeySet initialKeySet, KeySet handshakeKeySet, KeySet applicationKeySet) {
+    public static (byte firstByte, PacketType type) ReadFirstByte(Stream stream) {
         byte protectedFirstByte = Serializer.ReadByte(stream);
 
         PacketType type = (PacketType)(protectedFirstByte & 0b11110000);
@@ -119,11 +120,31 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
             _ => null
         };
 
-        if(packet is InitialPacket && initialKeySet is null)
-            return null;
+        if(packet is null) {
+            type = (PacketType)(protectedFirstByte & 0b11100000);
 
-        if(packet is HandshakePacket && handshakeKeySet is null)
-            return null;
+            packet = type switch {
+                PacketType.OneRtt => new OneRttPacket(),
+                PacketType.OneRttSpin => new OneRttPacket(),
+                0 => null,
+                _ => throw new NotImplementedException()
+            };
+        }
+
+        return (protectedFirstByte, packet.PacketType);
+    }
+
+    public Packet Unprotect(Stream stream, byte firstByte, KeySet keySet) {
+        byte protectedFirstByte = firstByte;
+
+        PacketType type = (PacketType)(protectedFirstByte & 0b11110000);
+
+        Packet packet = type switch {
+            PacketType.Initial => new InitialPacket(),
+            PacketType.Retry => new RetryPacket(),
+            PacketType.Handshake => new HandshakePacket(),
+            _ => null
+        };
 
         if(packet is null) {
             type = (PacketType)(protectedFirstByte & 0b11100000);
@@ -138,14 +159,6 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
             if(packet is null)
                 return null;
         }
-
-        KeySet keySet = packet switch {
-            InitialPacket => initialKeySet,
-            RetryPacket => null,
-            HandshakePacket => handshakeKeySet,
-            OneRttPacket => applicationKeySet,
-            _ => throw new NotImplementedException()
-        };
 
         int destinationConnectionIdLength;
 

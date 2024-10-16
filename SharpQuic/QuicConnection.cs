@@ -40,6 +40,10 @@ public sealed class QuicConnection {
 
     State state;
 
+    CutStream cryptoStream2 = new(10240);
+
+    TaskCompletionSource handshakeSource = new();
+
     HandshakeType cryptoType;
     int cryptoLength;
 
@@ -79,6 +83,8 @@ public sealed class QuicConnection {
         await connection.SendClientHelloAsync();
 
         await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
+
+        await Task.Factory.StartNew(connection.HandshakeRunnerAsync);
 
         await connection.ready.Task;
 
@@ -146,7 +152,26 @@ public sealed class QuicConnection {
                 MemoryStream stream = new(result.Buffer);
 
                 while(stream.Position < stream.Length) {
-                    Packet packet = protection.Unprotect(stream, initialStage?.KeySet, handshakeStage?.KeySet, applicationStage?.KeySet);
+                    (byte firstByte, PacketType type) = QuicPacketProtection.ReadFirstByte(stream);
+
+                    switch(type) {
+                        case PacketType.Handshake:
+                            await handshakeSource.Task;
+                            break;
+                        case PacketType.OneRtt:
+                            await ready.Task;
+                            break;
+                    }
+
+                    KeySet keySet = type switch {
+                        PacketType.Initial => initialStage?.KeySet,
+                        PacketType.Retry => null,
+                        PacketType.Handshake => handshakeStage?.KeySet,
+                        PacketType.OneRtt => applicationStage?.KeySet,
+                        _ => throw new NotImplementedException()
+                    };
+
+                    Packet packet = protection.Unprotect(stream, firstByte, keySet);
 
                     if(packet is null) {
                         Console.WriteLine("Invalid packet");
@@ -223,7 +248,9 @@ public sealed class QuicConnection {
                     if(handshakeStage is not null && packet is InitialPacket || applicationStage is not null && packet is HandshakePacket)
                         break;
 
-                    long position = cryptoStream.Position;
+                    cryptoStream2.Write(cryptoFrame.Data, cryptoFrame.Offset);
+
+                    /*long position = cryptoStream.Position;
 
                     cryptoStream.Position = cryptoStream.Length;
 
@@ -250,7 +277,7 @@ public sealed class QuicConnection {
                             cryptoType = 0;
                         } else
                             break;
-                    }
+                    }*/
 
                     break;
                 case StreamFrame streamFrame:
@@ -282,7 +309,28 @@ public sealed class QuicConnection {
         }
     }
 
+    async Task HandshakeRunnerAsync() {
+        while(state != State.Idle) {
+            byte[] data = new byte[4];
+
+            await cryptoStream2.ReadAsync(data);
+
+            (HandshakeType type, int length) = TlsClient.ReadHandshakeHeader(data);
+
+            data = new byte[length];
+
+            await cryptoStream2.ReadAsync(data);
+
+            tlsClient.ReceiveHandshake(type, data);
+
+            await HandleHandshakeAsync();
+        }
+    }
+
     async Task HandleHandshakeAsync() {
+        if(state == State.Null && tlsClient.State == TlsClient.TlsState.WaitServerHello)
+            cryptoStream2 = new(10240);
+
         if(state == State.Null && tlsClient.State >= TlsClient.TlsState.WaitEncryptedExtensions) {
             handshakeStage = new() {
                 KeySet = new(CipherSuite.Aes128GcmSHA256)
@@ -315,6 +363,8 @@ public sealed class QuicConnection {
             //initialStage = null;
 
             state = State.Connected;
+
+            handshakeSource.SetResult();
         }
 
         if(state == State.Connected && tlsClient.State == TlsClient.TlsState.Connected) {
@@ -338,9 +388,9 @@ public sealed class QuicConnection {
 
             //handshakeStage = null;
 
-            ready.SetResult();
-
             state = State.Idle;
+
+            ready.SetResult();
         }
     }
 
