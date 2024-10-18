@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using SharpQuic.IO;
 
 namespace SharpQuic;
 
@@ -8,6 +9,8 @@ public sealed class Stage {
     public KeySet KeySet { get; init; }
 
     public HashSet<uint> Received { get; } = [];
+
+    public CutStream CryptoStream { get; } = new(10240);
 
     readonly SortedSet<uint> acks = [];
 

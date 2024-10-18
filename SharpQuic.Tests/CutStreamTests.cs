@@ -3,13 +3,14 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using NUnit.Framework;
+using SharpQuic.IO;
 
 namespace SharpQuic.Tests;
 
 [TestFixture]
 public class CutStreamTests {
     [Test]
-    public async Task FillTest() {
+    public async Task FillAsyncTest() {
         CutStream array = new(1024);
 
         byte[] data = new byte[1024];
@@ -42,7 +43,7 @@ public class CutStreamTests {
     }
 
     [Test, Repeat(1000)]
-    public async Task BigReadTest() {
+    public async Task BigReadAsyncTest() {
         CutStream array = new(512);
 
         byte[] data = new byte[2048];
@@ -60,6 +61,37 @@ public class CutStreamTests {
         byte[] readData = new byte[2048];
 
         await array.ReadAsync(readData);
+
+        Assert.That(data.AsSpan().SequenceEqual(readData));
+    }
+
+    [Test]
+    public async Task SmallReadsAndWritesTest() {
+        CutStream stream = new(1024);
+
+        byte[] data = new byte[2048];
+
+        RandomNumberGenerator.Fill(data);
+
+        stream.Write(data.AsSpan()[..512], 0);
+
+        byte[] readData = new byte[2048];
+
+        await stream.ReadAsync(readData.AsMemory()[..256]);
+
+        stream.Write(data.AsSpan()[512..1024], 512);
+
+        await stream.ReadAsync(readData.AsMemory()[256..512]);
+
+        await stream.ReadAsync(readData.AsMemory()[512..768]);
+
+        await stream.ReadAsync(readData.AsMemory()[768..1024]);
+
+        stream.Write(data.AsSpan()[1024..2048], 1024);
+
+        await stream.ReadAsync(readData.AsMemory()[1024..1536]);
+
+        await stream.ReadAsync(readData.AsMemory()[1536..2048]);
 
         Assert.That(data.AsSpan().SequenceEqual(readData));
     }

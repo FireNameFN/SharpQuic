@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using SharpQuic.Frames;
+using SharpQuic.IO;
 using SharpQuic.Packets;
 using SharpQuic.Tls;
 using SharpQuic.Tls.Enums;
@@ -39,11 +40,6 @@ public sealed class QuicConnection {
     public readonly TaskCompletionSource<byte[]> data = new();
 
     State state;
-
-    HandshakeType cryptoType;
-    int cryptoLength;
-
-    MemoryStream cryptoStream = new();
 
     readonly ulong[] nextStreamIds = new ulong[2];
 
@@ -223,34 +219,22 @@ public sealed class QuicConnection {
                     if(handshakeStage is not null && packet is InitialPacket || applicationStage is not null && packet is HandshakePacket)
                         break;
 
-                    long position = cryptoStream.Position;
+                    CutStream cryptoStream = packet.PacketType switch {
+                        PacketType.Initial => initialStage.CryptoStream,
+                        PacketType.Handshake => handshakeStage.CryptoStream,
+                        PacketType.OneRtt => applicationStage.CryptoStream,
+                        _ => throw new QuicException(),
+                    };
 
-                    cryptoStream.Position = cryptoStream.Length;
+                    cryptoStream.Write(cryptoFrame.Data, cryptoFrame.Offset);
 
-                    cryptoStream.Write(cryptoFrame.Data);
+                    CutStreamReader cutStreamReader = new(cryptoStream);
 
-                    cryptoStream.Position = position;
-
-                    while(true) {
-                        if(cryptoType == 0 && cryptoStream.Length - cryptoStream.Position >= 4) {
-                            byte[] data = new byte[4];
-
-                            cryptoStream.ReadExactly(data);
-
-                            (cryptoType, cryptoLength) = TlsClient.ReadHandshakeHeader(data);
-                        }
-
-                        if(cryptoStream.Length - cryptoStream.Position >= cryptoLength) {
-                            byte[] data = new byte[cryptoLength];
-
-                            cryptoStream.ReadExactly(data);
-
-                            tlsClient.ReceiveHandshake(cryptoType, data);
-
-                            cryptoType = 0;
-                        } else
+                    while(cutStreamReader.Position < cutStreamReader.Length)
+                        if(tlsClient.TryReceiveHandshake(cutStreamReader))
+                            cryptoStream.AdvanceTo(cutStreamReader.Offset);
+                        else
                             break;
-                    }
 
                     break;
                 case StreamFrame streamFrame:

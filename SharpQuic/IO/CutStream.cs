@@ -4,39 +4,41 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace SharpQuic;
+namespace SharpQuic.IO;
 
 public sealed class CutStream(int bufferLength) {
     readonly byte[] buffer = new byte[bufferLength];
 
     readonly List<(ulong Min, ulong Max)> regions = [];
 
-    ulong offset;
-
     readonly SemaphoreSlim readSemaphore = new(0, 1);
 
     readonly SemaphoreSlim semaphore = new(1, 1);
 
-    public ulong MaxData => offset + (ulong)buffer.Length;
+    public ulong Offset { get; private set; }
+
+    public ulong MaxData => Offset + (ulong)buffer.Length;
+
+    public int Length => regions.Count > 0 ? (int)(regions[0].Max - Offset) : 0;
 
     public void Write(ReadOnlySpan<byte> data, ulong offset) {
         semaphore.Wait();
 
-        if(offset < this.offset) {
-            int length = (int)(this.offset - offset);
+        if(offset < Offset) {
+            int length = (int)(Offset - offset);
 
             if(data.Length < length)
                 return;
 
             data = data[length..];
 
-            offset = this.offset;
+            offset = Offset;
         }
 
-        if(this.offset + (ulong)buffer.Length < offset + (ulong)data.Length)
+        if(Offset + (ulong)buffer.Length < offset + (ulong)data.Length)
             throw new OverflowException();
 
-        data.CopyTo(buffer.AsSpan()[(int)(offset - this.offset)..]);
+        data.CopyTo(buffer.AsSpan()[(int)(offset - Offset)..]);
 
         (ulong, ulong) region = new(offset, offset + (ulong)data.Length);
 
@@ -75,17 +77,17 @@ public sealed class CutStream(int bufferLength) {
 
             await semaphore.WaitAsync();
 
-            int length = Math.Min(memory.Length, (int)(regions[0].Max - offset));
+            int length = Math.Min(memory.Length, (int)(regions[0].Max - Offset));
 
             buffer[..length].CopyTo(memory[memoryOffset..]);
 
             memoryOffset += length;
 
-            offset += (ulong)length;
+            Offset += (ulong)length;
 
             buffer.AsSpan()[length..].CopyTo(buffer);
 
-            if(offset >= regions[0].Max) {
+            if(regions[0].Max <= Offset) {
                 regions.RemoveAt(0);
 
                 if(readSemaphore.CurrentCount > 0)
@@ -95,5 +97,27 @@ public sealed class CutStream(int bufferLength) {
 
             semaphore.Release();
         }
+    }
+
+    public int ReadWithoutAdvance(Span<byte> span, ulong offset) {
+        if(offset < Offset)
+            return 0;
+
+        if(regions[0].Min > Offset)
+            return 0;
+
+        int length = Math.Min(span.Length, (int)(regions[0].Max - offset));
+
+        buffer.AsSpan().Slice((int)(offset - Offset), length).CopyTo(span);
+
+        return length;
+    }
+
+    public void AdvanceTo(ulong offset) {
+        buffer.AsSpan()[(int)(offset-Offset)..].CopyTo(buffer);
+
+        Offset = offset;
+
+        regions.RemoveAll(region => region.Max <= offset);
     }
 }

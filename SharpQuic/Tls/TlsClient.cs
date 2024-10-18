@@ -213,8 +213,11 @@ public sealed class TlsClient {
         return array;
     }
 
-    public static (HandshakeType Type, int Length) ReadHandshakeHeader(byte[] data) {
-        MemoryStream stream = new(data);
+    public bool TryReceiveHandshake(Stream stream) {
+        if(stream.Length - stream.Position < 4)
+            return false;
+
+        long position = stream.Position;
 
         HandshakeType type = (HandshakeType)Serializer.ReadByte(stream);
 
@@ -222,39 +225,36 @@ public sealed class TlsClient {
 
         ushort length = Serializer.ReadUInt16(stream);
 
-        return (type, length);
-    }
-
-    public void ReceiveHandshake(HandshakeType type, byte[] data) {
-        MemoryStream messageStream = new(data);
+        if(stream.Length - stream.Position < length)
+            return false;
 
         TlsState state = State;
 
         switch(type) {
             case HandshakeType.ClientHello:
-                ReceiveClientHello(ClientHelloMessage.Decode(messageStream));
+                ReceiveClientHello(ClientHelloMessage.Decode(stream));
                 Console.WriteLine($"Received ClientHello");
                 break;
             case HandshakeType.ServerHello:
-                ReceiveServerHello(ServerHelloMessage.Decode(messageStream));
+                ReceiveServerHello(ServerHelloMessage.Decode(stream));
                 Console.WriteLine($"Received ServerHello");
                 break;
             case HandshakeType.NewSessionTicket:
                 break;
             case HandshakeType.EncryptedExtensions:
-                ReceiveEncryptedExtensions(EncryptedExtensionsMessage.Decode(messageStream));
+                ReceiveEncryptedExtensions(EncryptedExtensionsMessage.Decode(stream));
                 Console.WriteLine($"Received EncryptedExtensions");
                 break;
             case HandshakeType.Certificate:
-                ReceiveCertificate(CertificateMessage.Decode(messageStream));
+                ReceiveCertificate(CertificateMessage.Decode(stream));
                 Console.WriteLine($"Received Certificate");
                 break;
             case HandshakeType.CertificateVerify:
-                ReceiveCertificateVerify(CertificateVerifyMessage.Decode(messageStream));
+                ReceiveCertificateVerify(CertificateVerifyMessage.Decode(stream));
                 Console.WriteLine($"Received CertificateVerify");
                 break;
             case HandshakeType.Finished:
-                ReceiveFinished(FinishedMessage.Decode(messageStream));
+                ReceiveFinished(FinishedMessage.Decode(stream));
                 Console.WriteLine($"Received Finished");
                 break;
             default:
@@ -263,14 +263,20 @@ public sealed class TlsClient {
                 //break;
         }
 
-        if(state != TlsState.WaitClientFinished) {
-            Serializer.WriteByte(messages, (byte)type);
+        if(state == TlsState.WaitClientFinished)
+            return true;
 
-            Serializer.WriteByte(messages, 0);
-            Serializer.WriteUInt16(messages, (ushort)data.Length);
+        int handshakeLength = (int)(stream.Position - position);
 
-            messages.Write(data);
-        }
+        stream.Position = position;
+
+        Span<byte> message = stackalloc byte[handshakeLength];
+
+        stream.ReadExactly(message);
+
+        messages.Write(message);
+
+        return true;
     }
 
     void ReceiveClientHello(ClientHelloMessage message) {

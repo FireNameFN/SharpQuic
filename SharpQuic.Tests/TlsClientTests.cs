@@ -41,7 +41,7 @@ public class TlsClientTests {
 
         byte[] data = ((CryptoFrame)reader.Read()).Data;
 
-        server.ReceiveHandshake(TlsClient.ReadHandshakeHeader(data[..4]).Type, data[4..]);
+        server.TryReceiveHandshake(new MemoryStream(data));
 
         server.SendServerHello();
 
@@ -49,19 +49,8 @@ public class TlsClientTests {
 
         MemoryStream stream = new(((CryptoFrame)reader.Read()).Data);
 
-        while(stream.Position < stream.Length) {
-            data = new byte[4];
-
-            stream.ReadExactly(data);
-
-            (HandshakeType type, int length) = TlsClient.ReadHandshakeHeader(data);
-
-            data = new byte[length];
-
-            stream.ReadExactly(data);
-
-            client.ReceiveHandshake(type, data);
-        }
+        while(stream.Position < stream.Length)
+            client.TryReceiveHandshake(stream);
 
         Assert.That(client.key.SequenceEqual(server.key));
 
@@ -77,19 +66,8 @@ public class TlsClientTests {
 
         stream = new(((CryptoFrame)reader.Read()).Data);
 
-        while(stream.Position < stream.Length) {
-            data = new byte[4];
-
-            stream.ReadExactly(data);
-
-            (HandshakeType type, int length) = TlsClient.ReadHandshakeHeader(data);
-
-            data = new byte[length];
-
-            stream.ReadExactly(data);
-
-            client.ReceiveHandshake(type, data);
-        }
+        while(stream.Position < stream.Length)
+            client.TryReceiveHandshake(stream);
 
         client.DeriveApplicationSecrets();
         server.DeriveApplicationSecrets();
