@@ -9,6 +9,8 @@ namespace SharpQuic.Tls.Messages;
 public sealed class ServerHelloMessage : IMessage {
     public HandshakeType Type { get; } = HandshakeType.ServerHello;
 
+    public CipherSuite CipherSuite { get; set; }
+
     public KeyShareExtension.KeyShareEntry[] KeyShare { get; set; }
 
     public void Encode(Stream stream) {
@@ -22,7 +24,7 @@ public sealed class ServerHelloMessage : IMessage {
 
         Serializer.WriteByte(stream, 0);
 
-        Serializer.WriteUInt16(stream, (ushort)CipherSuite.Aes128GcmSHA256);
+        Serializer.WriteUInt16(stream, (ushort)CipherSuite);
 
         Serializer.WriteByte(stream, 0);
 
@@ -38,13 +40,13 @@ public sealed class ServerHelloMessage : IMessage {
         int length = Serializer.ReadByte(stream);
         stream.Position += length;
 
-        //stream.Position += 2;
-
         CipherSuite cipherSuite = (CipherSuite)Serializer.ReadUInt16(stream);
 
         stream.Position++;
 
-        ServerHelloMessage message = new();
+        ServerHelloMessage message = new() {
+            CipherSuite = cipherSuite
+        };
 
         message.DecodeExtensions(stream);
 

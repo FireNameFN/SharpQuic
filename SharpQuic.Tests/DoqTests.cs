@@ -9,7 +9,7 @@ namespace SharpQuic.Tests;
 
 [TestFixture]
 public class DoqTests {
-    [Test, Explicit]
+    [Test]
     public async Task ConnectToAdGuardDoQAsyncTest() {
         IPHostEntry entry = await Dns.GetHostEntryAsync("dns.adguard-dns.com");
         

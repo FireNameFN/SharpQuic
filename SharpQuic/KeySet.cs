@@ -1,4 +1,5 @@
 using System;
+using System.Security.Cryptography;
 using SharpQuic.Tls;
 using SharpQuic.Tls.Enums;
 
@@ -20,12 +21,14 @@ public class KeySet(CipherSuite cipherSuite) {
     public byte[] DestinationHp { get; } = new byte[cipherSuite == CipherSuite.Aes128GcmSHA256 ? 16 : 32];
 
     public void Generate(ReadOnlySpan<byte> sourceSecret, ReadOnlySpan<byte> destinationSecret) {
-        HKDFExtensions.ExpandLabel(sourceSecret, "quic key", SourceKey);
-        HKDFExtensions.ExpandLabel(sourceSecret, "quic iv", SourceIv);
-        HKDFExtensions.ExpandLabel(sourceSecret, "quic hp", SourceHp);
+        HashAlgorithmName name = HashUtils.GetName(CipherSuite);
 
-        HKDFExtensions.ExpandLabel(destinationSecret, "quic key", DestinationKey);
-        HKDFExtensions.ExpandLabel(destinationSecret, "quic iv", DestinationIv);
-        HKDFExtensions.ExpandLabel(destinationSecret, "quic hp", DestinationHp);
+        HKDFExtensions.ExpandLabel(name, sourceSecret, "quic key", SourceKey);
+        HKDFExtensions.ExpandLabel(name, sourceSecret, "quic iv", SourceIv);
+        HKDFExtensions.ExpandLabel(name, sourceSecret, "quic hp", SourceHp);
+
+        HKDFExtensions.ExpandLabel(name, destinationSecret, "quic key", DestinationKey);
+        HKDFExtensions.ExpandLabel(name, destinationSecret, "quic iv", DestinationIv);
+        HKDFExtensions.ExpandLabel(name, destinationSecret, "quic hp", DestinationHp);
     }
 }

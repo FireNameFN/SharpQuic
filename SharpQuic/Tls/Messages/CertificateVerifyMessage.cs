@@ -14,6 +14,8 @@ public sealed class CertificateVerifyMessage : IMessage {
 
     public HandshakeType Type { get; } = HandshakeType.CertificateVerify;
 
+    public SignatureScheme SignatureScheme { get; set; }
+
     public byte[] Signature { get; set; }
 
     static CertificateVerifyMessage() {
@@ -41,34 +43,42 @@ public sealed class CertificateVerifyMessage : IMessage {
     public static CertificateVerifyMessage Create(EndpointType endpointType, byte[] messages, X509Certificate2 certificate) {
         byte[] signature = GetSignature(endpointType, messages);
 
+        SignatureScheme signatureScheme;
+
         using RSA rsa = certificate.GetRSAPrivateKey();
         
-        if(rsa is not null)
+        if(rsa is not null) {
+            signatureScheme = SignatureScheme.RSAPkcs1SHA256;
+
             signature = rsa.SignHash(signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        else {
+        } else {
+            signatureScheme = SignatureScheme.ECDSASecp256r1SHA256;
+
             using ECDsa ecdsa = certificate.GetECDsaPrivateKey();
 
             signature = ecdsa.SignHash(signature);
         }
 
         return new() {
+            SignatureScheme = signatureScheme,
             Signature = signature
         };
     }
 
     public void Encode(Stream stream) {
-        Serializer.WriteUInt16(stream, (ushort)SignatureScheme.RSAPkcs1SHA256);
+        Serializer.WriteUInt16(stream, (ushort)SignatureScheme);
 
         Serializer.WriteUInt16(stream, (ushort)Signature.Length);
         stream.Write(Signature);
     }
 
     public static CertificateVerifyMessage Decode(Stream stream) {
-        stream.Position += 2;
+        SignatureScheme signatureScheme = (SignatureScheme)Serializer.ReadUInt16(stream);
 
         int length = Serializer.ReadUInt16(stream);
 
         CertificateVerifyMessage message = new() {
+            SignatureScheme = signatureScheme,
             Signature = new byte[length]
         };
 
@@ -77,15 +87,20 @@ public sealed class CertificateVerifyMessage : IMessage {
         return message;
     }
 
-    public static bool Verify(EndpointType endpointType, X509Certificate2 certificate, byte[] signature, ReadOnlySpan<byte> messages) {
-        using RSA rsa = certificate.PublicKey.GetRSAPublicKey();
-
-        if(rsa is not null)
-            return rsa.VerifyHash(GetSignature(endpointType, messages), signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-
-        using ECDsa ecdsa = certificate.PublicKey.GetECDsaPublicKey();
-
-        return ecdsa.VerifyHash(GetSignature(endpointType, messages), signature, DSASignatureFormat.Rfc3279DerSequence);
+    public static bool Verify(EndpointType endpointType, X509Certificate2 certificate, SignatureScheme signatureScheme, byte[] signature, ReadOnlySpan<byte> messages) {
+        switch(signatureScheme) {
+            case SignatureScheme.RSAPkcs1SHA256:
+                using(RSA rsa = certificate.PublicKey.GetRSAPublicKey())
+                    return rsa.VerifyHash(GetSignature(endpointType, messages), signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            case SignatureScheme.RSAPssRsaeSHA256:
+                using(RSA rsa = certificate.PublicKey.GetRSAPublicKey())
+                    return rsa.VerifyHash(GetSignature(endpointType, messages), signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
+            case SignatureScheme.ECDSASecp256r1SHA256:
+                using(ECDsa ecdsa = certificate.PublicKey.GetECDsaPublicKey())
+                    return ecdsa.VerifyHash(GetSignature(endpointType, messages), signature, DSASignatureFormat.Rfc3279DerSequence);
+            default:
+                throw new QuicException();
+        }
     }
 
     static byte[] GetSignature(EndpointType endpointType, ReadOnlySpan<byte> messages) {

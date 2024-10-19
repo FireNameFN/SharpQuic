@@ -27,11 +27,11 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         Span<byte> clientInitialSecret = stackalloc byte[32];
 
-        HKDFExtensions.ExpandLabel(initialSecret, "client in", clientInitialSecret);
+        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, initialSecret, "client in", clientInitialSecret);
 
         Span<byte> serverInitialSecret = stackalloc byte[32];
 
-        HKDFExtensions.ExpandLabel(initialSecret, "server in", serverInitialSecret);
+        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, initialSecret, "server in", serverInitialSecret);
         
         if(EndpointType == EndpointType.Client)
             keySet.Generate(clientInitialSecret, serverInitialSecret);
@@ -51,7 +51,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
             _ => throw new NotImplementedException()
         };
 
-        if(!initialKeysGenerated && packet is InitialPacket)
+        if(!initialKeysGenerated && packet.PacketType == PacketType.Initial)
             GenerateInitialKeys(packet.DestinationConnectionId, keySet);
 
         Span<byte> nonce = stackalloc byte[keySet.SourceIv.Length];
@@ -62,7 +62,9 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         Span<byte> tag = stackalloc byte[16];
 
-        switch(CipherSuite) {
+        CipherSuite cipherSuite = packet.PacketType == PacketType.Initial ? CipherSuite.Aes128GcmSHA256 : CipherSuite;
+
+        switch(cipherSuite) {
             case CipherSuite.Aes128GcmSHA256:
             case CipherSuite.Aes256GcmSHA384:
                 using(AesGcm aesGcm = new(keySet.SourceKey, 16))

@@ -29,7 +29,7 @@ public class HKDFExtensionsTests {
 
         Span<byte> clientInitialSecret = stackalloc byte[32];
 
-        HKDFExtensions.ExpandLabel(initialSecret, "client in", clientInitialSecret);
+        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, initialSecret, "client in", clientInitialSecret);
 
         Span<byte> clientInitialSecretTest = stackalloc byte[32];
 
@@ -39,7 +39,7 @@ public class HKDFExtensionsTests {
 
         Span<byte> key = stackalloc byte[16];
 
-        HKDFExtensions.ExpandLabel(clientInitialSecret, "quic key", key);
+        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, clientInitialSecret, "quic key", key);
 
         Span<byte> keyTest = stackalloc byte[16];
 

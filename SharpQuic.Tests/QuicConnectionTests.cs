@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -10,7 +9,7 @@ namespace SharpQuic.Tests;
 
 [TestFixture]
 public class QuicConnectionTests {
-    [Test]
+    [Test, Explicit]
     public async Task QuicConnectionTestAsync() {
         QuicConnection client = null;
 
@@ -35,20 +34,17 @@ public class QuicConnectionTests {
 
         X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
 
-        Task<QuicConnection> task = QuicConnection.ListenAsync(new() {
+        QuicConnection server = await QuicConnection.ListenAsync(new() {
             Point = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
             CertificateChain = [certificate]
         });
 
-        await Task.WhenAll(
-            source.Task,
-            task
-        );
+        await source.Task;
 
-        //Assert.That(client.protection.sourceKey.SequenceEqual(server.protection.destinationKey));
-        //Assert.That(client.protection.sourceIv.SequenceEqual(server.protection.destinationIv));
-        //Assert.That(client.protection.sourceHp.SequenceEqual(server.protection.destinationHp));
+        Assert.That(client.applicationStage.KeySet.SourceKey.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationKey));
+        Assert.That(client.applicationStage.KeySet.SourceIv.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationIv));
+        Assert.That(client.applicationStage.KeySet.SourceHp.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationHp));
     }
 
     [Test, Explicit]

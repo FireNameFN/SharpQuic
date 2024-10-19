@@ -8,25 +8,21 @@ namespace SharpQuic.Tls;
 public static class HKDFExtensions {
     static readonly byte[] TlsLabel = Encoding.ASCII.GetBytes("tls13 ");
 
-    public static void ExpandLabel(HashAlgorithmName hashAlgorithmName, ReadOnlySpan<byte> secret, ReadOnlySpan<byte> label, ReadOnlySpan<byte> context, Span<byte> output) {
+    public static void ExpandLabel(HashAlgorithmName name, ReadOnlySpan<byte> secret, string label, ReadOnlySpan<byte> context, Span<byte> output) {
         Span<byte> lengthSpan = stackalloc byte[sizeof(ushort)];
 
         BinaryPrimitives.WriteUInt16BigEndian(lengthSpan, (ushort)output.Length);
 
-        Span<byte> info = [..lengthSpan, (byte)(TlsLabel.Length + label.Length), ..TlsLabel, ..label, (byte)context.Length, ..context];
-
-        HKDF.Expand(hashAlgorithmName, secret, output, info);
-    }
-
-    public static void ExpandLabel(HashAlgorithmName hash, ReadOnlySpan<byte> secret, string label, ReadOnlySpan<byte> context, Span<byte> output) {
         Span<byte> labelSpan = stackalloc byte[Encoding.ASCII.GetByteCount(label)];
 
         Encoding.ASCII.GetBytes(label, labelSpan);
 
-        ExpandLabel(hash, secret, labelSpan, context, output);
+        Span<byte> info = [..lengthSpan, (byte)(TlsLabel.Length + label.Length), ..TlsLabel, ..labelSpan, (byte)context.Length, ..context];
+
+        HKDF.Expand(name, secret, output, info);
     }
 
-    public static void ExpandLabel(ReadOnlySpan<byte> secret, string label, Span<byte> output) {
-        ExpandLabel(HashAlgorithmName.SHA256, secret, label, [], output);
+    public static void ExpandLabel(HashAlgorithmName name, ReadOnlySpan<byte> secret, string label, Span<byte> output) {
+        ExpandLabel(name, secret, label, [], output);
     }
 }

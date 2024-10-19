@@ -21,6 +21,8 @@ public sealed class TlsClient {
 
     public TlsState State { get; private set; }
 
+    public CipherSuite CipherSuite { get; private set; }
+
     readonly QuicTransportParameters parameters;
 
     string[] protocols;
@@ -67,46 +69,54 @@ public sealed class TlsClient {
     }
 
     public void DeriveHandshakeSecrets() {
-        hash = new byte[32];
+        HashAlgorithmName name = HashUtils.GetName(CipherSuite);
 
-        HKDF.Extract(HashAlgorithmName.SHA256, hash, hash, hash);
+        hash = new byte[HashUtils.GetLength(name)];
 
-        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "derived", SHA256.HashData([]), hash);
+        HKDF.Extract(name, hash, hash, hash);
 
-        HKDF.Extract(HashAlgorithmName.SHA256, key, hash, hash);
+        IncrementalHash incrementalHash = IncrementalHash.CreateHash(name);
 
-        Span<byte> messagesHash = stackalloc byte[32];
+        HKDFExtensions.ExpandLabel(name, hash, "derived", incrementalHash.GetCurrentHash(), hash);
 
-        GetMessagesHash(messagesHash);
+        HKDF.Extract(name, key, hash, hash);
 
-        clientHandshakeSecret = new byte[32];
+        Span<byte> messagesHash = stackalloc byte[hash.Length];
 
-        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "c hs traffic", messagesHash, clientHandshakeSecret);
+        GetMessagesHash(name, messagesHash);
 
-        serverHandshakeSecret = new byte[32];
+        clientHandshakeSecret = new byte[hash.Length];
 
-        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "s hs traffic", messagesHash, serverHandshakeSecret);
+        HKDFExtensions.ExpandLabel(name, hash, "c hs traffic", messagesHash, clientHandshakeSecret);
+
+        serverHandshakeSecret = new byte[hash.Length];
+
+        HKDFExtensions.ExpandLabel(name, hash, "s hs traffic", messagesHash, serverHandshakeSecret);
 
         keyPair = null;
         key = null;
     }
 
     public void DeriveApplicationSecrets() {
-        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "derived", SHA256.HashData([]), hash);
+        HashAlgorithmName name = HashUtils.GetName(CipherSuite);
 
-        Span<byte> messagesHash = stackalloc byte[32];
+        IncrementalHash incrementalHash = IncrementalHash.CreateHash(name);
 
-        HKDF.Extract(HashAlgorithmName.SHA256, messagesHash, hash, hash);
+        HKDFExtensions.ExpandLabel(name, hash, "derived", incrementalHash.GetCurrentHash(), hash);
 
-        GetMessagesHash(messagesHash);
+        Span<byte> messagesHash = stackalloc byte[hash.Length];
 
-        clientApplicationSecret = new byte[32];
+        HKDF.Extract(name, messagesHash, hash, hash);
 
-        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "c ap traffic", messagesHash, clientApplicationSecret);
+        GetMessagesHash(name, messagesHash);
 
-        serverApplicationSecret = new byte[32];
+        clientApplicationSecret = new byte[hash.Length];
 
-        HKDFExtensions.ExpandLabel(HashAlgorithmName.SHA256, hash, "s ap traffic", messagesHash, serverApplicationSecret);
+        HKDFExtensions.ExpandLabel(name, hash, "c ap traffic", messagesHash, clientApplicationSecret);
+
+        serverApplicationSecret = new byte[hash.Length];
+
+        HKDFExtensions.ExpandLabel(name, hash, "s ap traffic", messagesHash, serverApplicationSecret);
 
         hash = null;
     }
@@ -127,6 +137,7 @@ public sealed class TlsClient {
         byte[] key1 = [4, ..k, ..k1];
 
         ClientHelloMessage message = new() {
+            CipherSuites = [CipherSuite.Aes256GcmSHA384],
             KeyShare = [new(NamedGroup.X25519, key), new(NamedGroup.SecP256r1, key1)],
             Protocols = protocols,
             Parameters = parameters
@@ -143,6 +154,7 @@ public sealed class TlsClient {
         ((X25519PublicKeyParameters)keyPair.Public).Encode(key);
 
         ServerHelloMessage message = new() {
+            CipherSuite = CipherSuite,
             KeyShare = [new(NamedGroup.X25519, key)]
         };
 
@@ -165,13 +177,15 @@ public sealed class TlsClient {
 
         stream.Write(GetHandshake(certificateMessage));
 
+        HashAlgorithmName name = HashUtils.GetName(CipherSuite);
+
         if(certificateChain.Length > 0) {
-            CertificateVerifyMessage certificateVerifyMessage = CertificateVerifyMessage.Create(EndpointType.Server, GetMessagesHash(), certificateChain[0]);
+            CertificateVerifyMessage certificateVerifyMessage = CertificateVerifyMessage.Create(EndpointType.Server, GetMessagesHash(name), certificateChain[0]);
 
             stream.Write(GetHandshake(certificateVerifyMessage));
         }
 
-        FinishedMessage finishedMessage = FinishedMessage.Create(GetMessagesHash(), serverHandshakeSecret);
+        FinishedMessage finishedMessage = FinishedMessage.Create(name, GetMessagesHash(name), serverHandshakeSecret);
 
         stream.Write(GetHandshake(finishedMessage));
 
@@ -181,7 +195,9 @@ public sealed class TlsClient {
     }
 
     public void SendClientFinished() {
-        FinishedMessage finishedMessage = FinishedMessage.Create(GetMessagesHash(), clientHandshakeSecret);
+        HashAlgorithmName name = HashUtils.GetName(CipherSuite);
+
+        FinishedMessage finishedMessage = FinishedMessage.Create(name, GetMessagesHash(name), clientHandshakeSecret);
 
         HandshakeFragmentWriter.WriteFragment(GetHandshake(finishedMessage));
     }
@@ -240,6 +256,7 @@ public sealed class TlsClient {
                 Console.WriteLine($"Received ServerHello");
                 break;
             case HandshakeType.NewSessionTicket:
+                Console.WriteLine($"Received NewSessionTicket");
                 break;
             case HandshakeType.EncryptedExtensions:
                 ReceiveEncryptedExtensions(EncryptedExtensionsMessage.Decode(stream));
@@ -254,7 +271,7 @@ public sealed class TlsClient {
                 Console.WriteLine($"Received CertificateVerify");
                 break;
             case HandshakeType.Finished:
-                ReceiveFinished(FinishedMessage.Decode(stream));
+                ReceiveFinished(FinishedMessage.Decode(HashUtils.GetName(CipherSuite), stream));
                 Console.WriteLine($"Received Finished");
                 break;
             default:
@@ -283,6 +300,13 @@ public sealed class TlsClient {
         if(State != TlsState.Start)
             throw new QuicException();
 
+        if(message.CipherSuites.Contains(CipherSuite.ChaCha20Poly1305Sha256))
+            CipherSuite = CipherSuite.ChaCha20Poly1305Sha256;
+        else if(message.CipherSuites.Contains(CipherSuite.Aes256GcmSHA384))
+            CipherSuite = CipherSuite.Aes256GcmSHA384;
+        else
+            CipherSuite = CipherSuite.Aes128GcmSHA256;
+
         DeriveKey(message.KeyShare);
 
         if(message.LegacySessionId.Length > 0)
@@ -294,6 +318,8 @@ public sealed class TlsClient {
     void ReceiveServerHello(ServerHelloMessage message) {
         if(State != TlsState.WaitServerHello)
             throw new QuicException();
+
+        CipherSuite = message.CipherSuite;
 
         DeriveKey(message.KeyShare);
 
@@ -320,7 +346,7 @@ public sealed class TlsClient {
         if(State != TlsState.WaitCertificateVerify)
             throw new QuicException();
 
-        if(!CertificateVerifyMessage.Verify(EndpointType.Server, remoteCertificateChain[0], message.Signature, GetMessagesHash()))
+        if(!CertificateVerifyMessage.Verify(EndpointType.Server, remoteCertificateChain[0], message.SignatureScheme, message.Signature, GetMessagesHash(HashUtils.GetName(CipherSuite))))
             throw new QuicException();
 
         State = TlsState.WaitServerFinished;
@@ -330,7 +356,9 @@ public sealed class TlsClient {
         if(State != TlsState.WaitServerFinished && State != TlsState.WaitClientFinished)
             throw new QuicException();
 
-        if(!message.Verify(GetMessagesHash(), State == TlsState.WaitServerFinished ? serverHandshakeSecret : clientHandshakeSecret))
+        HashAlgorithmName name = HashUtils.GetName(CipherSuite);
+
+        if(!message.Verify(name, GetMessagesHash(name), State == TlsState.WaitServerFinished ? serverHandshakeSecret : clientHandshakeSecret))
             throw new QuicException();
 
         State = TlsState.Connected;
@@ -346,22 +374,25 @@ public sealed class TlsClient {
         agreement.CalculateAgreement(key, this.key);
     }
 
-    byte[] GetMessagesHash() {
+    void GetMessagesHash(HashAlgorithmName name, Span<byte> hash) {
         messages.Position = 0;
 
-        byte[] hash = SHA256.HashData(messages);
+        if(name == HashAlgorithmName.SHA256)
+            SHA256.HashData(messages, hash);
+        else if(name == HashAlgorithmName.SHA384)
+            SHA384.HashData(messages, hash);
+        else
+            throw new ArgumentOutOfRangeException(nameof(name));
 
         messages.Position = messages.Length;
-
-        return hash;
     }
 
-    void GetMessagesHash(Span<byte> hash) {
-        messages.Position = 0;
+    byte[] GetMessagesHash(HashAlgorithmName name) {
+        byte[] hash = new byte[HashUtils.GetLength(name)];
 
-        SHA256.HashData(messages, hash);
+        GetMessagesHash(name, hash);
 
-        messages.Position = messages.Length;
+        return hash;
     }
 
     public enum TlsState {

@@ -6,7 +6,6 @@ using System.Security.Cryptography.X509Certificates;
 using NUnit.Framework;
 using SharpQuic.Frames;
 using SharpQuic.Tls;
-using SharpQuic.Tls.Enums;
 
 namespace SharpQuic.Tests;
 

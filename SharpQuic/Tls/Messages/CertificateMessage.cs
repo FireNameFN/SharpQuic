@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography.X509Certificates;
@@ -16,12 +17,12 @@ public sealed class CertificateMessage : IMessage {
         MemoryStream certificateStream = new();
 
         foreach(X509Certificate2 certificate in CertificateChain) {
-            byte[] data = certificate.GetRawCertData();
+            ReadOnlyMemory<byte> data = certificate.RawDataMemory;
 
             Serializer.WriteByte(certificateStream, 0);
             Serializer.WriteUInt16(certificateStream, (ushort)data.Length);
 
-            certificateStream.Write(data);
+            certificateStream.Write(data.Span);
 
             Serializer.WriteUInt16(certificateStream, 0);
         }

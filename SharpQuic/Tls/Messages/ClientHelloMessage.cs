@@ -9,6 +9,8 @@ namespace SharpQuic.Tls.Messages;
 public sealed class ClientHelloMessage : IMessage {
     public HandshakeType Type { get; } = HandshakeType.ClientHello;
 
+    public CipherSuite[] CipherSuites { get; set; }
+
     public KeyShareExtension.KeyShareEntry[] KeyShare { get; set; }
 
     public string[] Protocols { get; set; }
@@ -28,10 +30,10 @@ public sealed class ClientHelloMessage : IMessage {
 
         Serializer.WriteByte(stream, 0);
 
-        Serializer.WriteUInt16(stream, 2);
-        Serializer.WriteUInt16(stream, (ushort)CipherSuite.Aes128GcmSHA256);
-        //Serializer.WriteUInt16(stream, (ushort)CipherSuite.Aes256GcmSHA384);
-        //Serializer.WriteUInt16(stream, (ushort)CipherSuite.ChaCha20Poly1305Sha256);
+        Serializer.WriteUInt16(stream, (ushort)(CipherSuites.Length * 2));
+
+        foreach(CipherSuite cipherSuite in CipherSuites)
+            Serializer.WriteUInt16(stream, (ushort)cipherSuite);
 
         Serializer.WriteByte(stream, 1);
         Serializer.WriteByte(stream, 0);
@@ -54,12 +56,11 @@ public sealed class ClientHelloMessage : IMessage {
         stream.Read(message.LegacySessionId);
 
         length = Serializer.ReadUInt16(stream) / 2;
-        //stream.Position += length;
 
-        CipherSuite[] cipherSuites = new CipherSuite[length];
+        message.CipherSuites = new CipherSuite[length];
 
         for(int i = 0; i < length; i++)
-            cipherSuites[i] = (CipherSuite)Serializer.ReadUInt16(stream);
+            message.CipherSuites[i] = (CipherSuite)Serializer.ReadUInt16(stream);
 
         stream.Position += 2;
 

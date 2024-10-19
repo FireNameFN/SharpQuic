@@ -19,7 +19,7 @@ public sealed class QuicConnection {
 
     internal readonly QuicPacketProtection protection;
 
-    readonly QuicTransportParameters parameters;
+    internal readonly QuicTransportParameters parameters;
 
     internal Stage initialStage;
 
@@ -240,9 +240,6 @@ public sealed class QuicConnection {
                 case StreamFrame streamFrame:
                     streams[streamFrame.Id].Put(streamFrame.Data, streamFrame.Offset);
 
-                    //data.SetResult(frame.Data);
-                    //streams[]
-
                     break;
                 case NewConnectionIdFrame:
                     //destinationConnectionId = frame.Data;
@@ -269,10 +266,12 @@ public sealed class QuicConnection {
     async Task HandleHandshakeAsync() {
         if(state == State.Null && tlsClient.State >= TlsClient.TlsState.WaitEncryptedExtensions) {
             handshakeStage = new() {
-                KeySet = new(CipherSuite.Aes128GcmSHA256)
+                KeySet = new(tlsClient.CipherSuite)
             };
 
             tlsClient.HandshakeFragmentWriter = handshakeStage.FrameWriter;
+
+            protection.CipherSuite = tlsClient.CipherSuite;
 
             if(endpointType == EndpointType.Server) {
                 tlsClient.SendServerHello();
@@ -303,7 +302,7 @@ public sealed class QuicConnection {
 
         if(state == State.Connected && tlsClient.State == TlsClient.TlsState.Connected) {
             applicationStage = new() {
-                KeySet = new(CipherSuite.Aes128GcmSHA256)
+                KeySet = new(tlsClient.CipherSuite)
             };
 
             if(endpointType == EndpointType.Client) {
