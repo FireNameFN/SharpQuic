@@ -1,13 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using SharpQuic.Tls;
 
 namespace SharpQuic;
 
-public sealed class FrameWriter : IFragmentWriter {
+public sealed class FrameWriter {
     readonly MemoryStream stream = new();
+
+    public int Length => (int)stream.Length;
 
     public bool HasPayload => stream.Length > 0;
 
@@ -46,7 +46,7 @@ public sealed class FrameWriter : IFragmentWriter {
         foreach(uint ack in acks)
             Console.WriteLine($"ACK {ack}");
 
-        foreach(uint ack in acks.Reverse().Skip(0)) {
+        foreach(uint ack in acks.Reverse()) {
             gap = previous - ack - 1;
             previous = ack;
 
@@ -102,10 +102,10 @@ public sealed class FrameWriter : IFragmentWriter {
         rangeStream.CopyTo(stream);
     }
 
-    public void WriteCrypto(ReadOnlySpan<byte> data) {
+    public void WriteCrypto(ReadOnlySpan<byte> data, ulong offset) {
         Serializer.WriteVariableLength(stream, (ulong)FrameType.Crypto);
 
-        Serializer.WriteVariableLength(stream, 0);
+        Serializer.WriteVariableLength(stream, offset);
 
         Serializer.WriteVariableLength(stream, (ulong)data.Length);
 
@@ -124,7 +124,11 @@ public sealed class FrameWriter : IFragmentWriter {
         stream.Write(data);
     }
 
-    void IFragmentWriter.WriteFragment(ReadOnlySpan<byte> fragment) {
-        WriteCrypto(fragment);
+    public void WriteMaxStreamData(ulong streamId, ulong maxData) {
+        Serializer.WriteVariableLength(stream, (ulong)FrameType.MaxStreamData);
+
+        Serializer.WriteVariableLength(stream, streamId);
+
+        Serializer.WriteVariableLength(stream, maxData);
     }
 }

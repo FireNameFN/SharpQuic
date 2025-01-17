@@ -9,6 +9,8 @@ public sealed class PacketWriter {
 
     readonly MemoryStream stream = new();
 
+    public int Length => (int)stream.Length;
+
     internal PacketWriter(QuicConnection connection) {
         this.connection = connection;
     }
@@ -38,11 +40,4 @@ public sealed class PacketWriter {
 
         return datagram;
     }
-
-    /*public void CopyTo(Stream stream) {
-        this.stream.Position = 0;
-        this.stream.CopyTo(stream);
-        //this.stream.Position = 0;
-        this.stream.SetLength(0);
-    }*/
 }

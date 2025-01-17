@@ -10,7 +10,7 @@ namespace SharpQuic.Tests;
 [TestFixture]
 public class DoqTests {
     [Test]
-    public async Task ConnectToAdGuardDoQAsyncTest() {
+    public async Task ConnectToAdGuardDoqAsyncTest() {
         IPHostEntry entry = await Dns.GetHostEntryAsync("dns.adguard-dns.com");
         
         QuicConnection connection = await QuicConnection.ConnectAsync(new() {
@@ -36,7 +36,9 @@ public class DoqTests {
 
         BinaryPrimitives.WriteUInt16BigEndian(lengthArray, (ushort)data.Length);
 
-        await stream.WriteAsync([..lengthArray, ..data], true);
+        data = [..lengthArray, ..data];
+
+        await stream.WriteAsync(data, true);
 
         await stream.ReadAsync(lengthArray);
 
@@ -52,7 +54,7 @@ public class DoqTests {
     }
 
     [Test, Explicit]
-    public async Task ConnectToLocalDoQAsyncTest() {
+    public async Task ConnectToLocalDoqAsyncTest() {
         QuicConnection connection = await QuicConnection.ConnectAsync(new() {
             Point = IPEndPoint.Parse("127.0.0.1:853"),
             Protocols = ["doq"]
@@ -72,7 +74,9 @@ public class DoqTests {
 
         BinaryPrimitives.WriteUInt16BigEndian(length, (ushort)data.Length);
 
-        await stream.WriteAsync([..length, ..data], true);
+        data = [..length, ..data];
+
+        await stream.WriteAsync(data, true);
 
         await Task.Delay(200);
 

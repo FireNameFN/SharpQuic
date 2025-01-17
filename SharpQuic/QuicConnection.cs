@@ -41,7 +41,13 @@ public sealed class QuicConnection {
 
     State state;
 
-    readonly ulong[] nextStreamIds = new ulong[2];
+    ulong nextBidirectionalStreamId;
+
+    ulong nextUnidirectionalStreamId;
+
+    ulong nextPeerBidirectionalStreamId;
+
+    ulong nextPeerUnidirectionalStreamId;
 
     readonly Dictionary<ulong, QuicStream> streams = [];
 
@@ -57,9 +63,7 @@ public sealed class QuicConnection {
             KeySet = new(CipherSuite.Aes128GcmSHA256)
         };
 
-        tlsClient = new(configuration.Parameters, configuration.Protocols, configuration.CertificateChain) {
-            InitialFragmentWriter = initialStage.FrameWriter,
-        };
+        tlsClient = new(configuration.Parameters, configuration.Protocols, configuration.CertificateChain);
 
         sourceConnectionId = configuration.Parameters.InitialSourceConnectionId;
         destinationConnectionId = RandomNumberGenerator.GetBytes(8);
@@ -96,7 +100,7 @@ public sealed class QuicConnection {
     }
 
     public QuicStream OpenBidirectionalStream() {
-        ulong id = nextStreamIds[0]++;
+        ulong id = nextBidirectionalStreamId++;
 
         QuicStream stream = new(this, id << 2 | (endpointType == EndpointType.Client ? 0u : 1u));
 
@@ -106,7 +110,7 @@ public sealed class QuicConnection {
     }
 
     public QuicStream OpenUnidirectionalStream() {
-        ulong id = nextStreamIds[1]++;
+        ulong id = nextUnidirectionalStreamId++;
 
         QuicStream stream = new(this, id << 2 | 0b10 | (endpointType == EndpointType.Client ? 0u : 1u));
 
@@ -115,16 +119,57 @@ public sealed class QuicConnection {
         return stream;
     }
 
-    public ValueTask<int> FlushAsync(byte[] token = null) {
-        initialStage?.Write(packetWriter, PacketType.Initial, token);
-        handshakeStage?.Write(packetWriter, PacketType.Handshake);
-        applicationStage?.Write(packetWriter, PacketType.OneRtt);
+    public QuicStream ReceiveBidirectionalStream() {
+        ulong id = nextPeerBidirectionalStreamId++;
 
+        QuicStream stream = new(this, id << 2 | (endpointType == EndpointType.Server ? 0u : 1u));
+
+        streams.Add(stream.Id, stream);
+
+        return stream;
+    }
+
+    public QuicStream ReceiveUnidirectionalStream() {
+        ulong id = nextPeerUnidirectionalStreamId++;
+
+        QuicStream stream = new(this, id << 2 | 0b10 | (endpointType == EndpointType.Server ? 0u : 1u));
+
+        streams.Add(stream.Id, stream);
+
+        return stream;
+    }
+
+    internal ValueTask<int> SendAsync(PacketWriter packetWriter) {
         byte[] datagram = packetWriter.ToDatagram();
 
         Console.WriteLine($"Sending datagram: {datagram.Length}");
 
         return client.SendAsync(datagram);
+    }
+
+    internal ValueTask<int> FlushAsync(byte[] token = null) {
+        initialStage?.Write(packetWriter, PacketType.Initial, token);
+        handshakeStage?.Write(packetWriter, PacketType.Handshake);
+        applicationStage?.Write(packetWriter, PacketType.OneRtt);
+
+        return SendAsync(packetWriter);
+    }
+
+    internal async Task SendCrypto(ReadOnlyMemory<byte> data, FrameWriter frameWriter) {
+        int position = 0;
+
+        while(position < data.Length) {
+            int length = 1200 - frameWriter.Length;
+
+            if(position + length > data.Length)
+                length = data.Length - position;
+
+            frameWriter.WriteCrypto(data.Slice(position, length).Span, (ulong)position);
+
+            position += length;
+
+            await FlushAsync();
+        }
     }
 
     async Task RunnerAsync() {
@@ -136,7 +181,7 @@ public sealed class QuicConnection {
 
                 Console.WriteLine($"Received datagram: {result.Buffer.Length}");
 
-                if(state == State.Null && endpointType == EndpointType.Server)
+                if(state == State.Initial && endpointType == EndpointType.Server)
                     client.Connect(result.RemoteEndPoint);
 
                 MemoryStream stream = new(result.Buffer);
@@ -188,7 +233,7 @@ public sealed class QuicConnection {
             return;
         }
 
-        if(state == State.Null && packet is InitialPacket initialPacket) {
+        if(state == State.Initial && packet is InitialPacket initialPacket) {
             destinationConnectionId = initialPacket.SourceConnectionId;
 
             if(endpointType == EndpointType.Server)
@@ -238,7 +283,23 @@ public sealed class QuicConnection {
 
                     break;
                 case StreamFrame streamFrame:
-                    streams[streamFrame.Id].Put(streamFrame.Data, streamFrame.Offset);
+                    if(!streams.TryGetValue(streamFrame.Id, out QuicStream stream)) {
+                        stream = new(this, streamFrame.Id);
+
+                        streams[streamFrame.Id] = stream;
+                    }
+
+                    stream.Put(streamFrame.Data, streamFrame.Offset, streamFrame.Fin);
+
+                    break;
+                case MaxStreamDataFrame maxStreamDataFrame:
+                    if(!streams.TryGetValue(maxStreamDataFrame.Id, out stream)) {
+                        stream = new(this, maxStreamDataFrame.Id);
+
+                        streams[maxStreamDataFrame.Id] = stream;
+                    }
+
+                    stream.MaxStreamData(maxStreamDataFrame.MaxStreamData);
 
                     break;
                 case NewConnectionIdFrame:
@@ -246,6 +307,9 @@ public sealed class QuicConnection {
 
                     break;
                 case HandshakeDoneFrame:
+                    initialStage = null;
+                    handshakeStage = null;
+
                     break;
             }
         }
@@ -264,17 +328,15 @@ public sealed class QuicConnection {
     }
 
     async Task HandleHandshakeAsync() {
-        if(state == State.Null && tlsClient.State >= TlsClient.TlsState.WaitEncryptedExtensions) {
+        if(state == State.Initial && tlsClient.State >= TlsClient.TlsState.WaitEncryptedExtensions) {
             handshakeStage = new() {
                 KeySet = new(tlsClient.CipherSuite)
             };
 
-            tlsClient.HandshakeFragmentWriter = handshakeStage.FrameWriter;
-
             protection.CipherSuite = tlsClient.CipherSuite;
 
             if(endpointType == EndpointType.Server) {
-                tlsClient.SendServerHello();
+                initialStage.FrameWriter.WriteCrypto(tlsClient.SendServerHello(), 0);
                 
                 tlsClient.DeriveHandshakeSecrets();
 
@@ -282,7 +344,7 @@ public sealed class QuicConnection {
 
                 Console.WriteLine("Generated handshake keys.");
 
-                tlsClient.SendServerHandshake();
+                handshakeStage.FrameWriter.WriteCrypto(tlsClient.SendServerHandshake(), 0);
 
                 Console.WriteLine("Sending server handshake.");
 
@@ -294,19 +356,17 @@ public sealed class QuicConnection {
 
                 Console.WriteLine("Generated handshake keys.");
             }
-            
-            //initialStage = null;
 
-            state = State.Connected;
+            state = State.Handshake;
         }
 
-        if(state == State.Connected && tlsClient.State == TlsClient.TlsState.Connected) {
+        if(state == State.Handshake && tlsClient.State == TlsClient.TlsState.Connected) {
             applicationStage = new() {
                 KeySet = new(tlsClient.CipherSuite)
             };
 
             if(endpointType == EndpointType.Client) {
-                tlsClient.SendClientFinished();
+                handshakeStage.FrameWriter.WriteCrypto(tlsClient.SendClientFinished(), 0);
 
                 await FlushAsync();
 
@@ -319,8 +379,6 @@ public sealed class QuicConnection {
                 applicationStage.KeySet.Generate(tlsClient.serverApplicationSecret, tlsClient.clientApplicationSecret);
             }
 
-            //handshakeStage = null;
-
             ready.SetResult();
 
             state = State.Idle;
@@ -328,7 +386,7 @@ public sealed class QuicConnection {
     }
 
     ValueTask<int> SendClientHelloAsync(byte[] token = null) {
-        tlsClient.SendClientHello();
+        initialStage.FrameWriter.WriteCrypto(tlsClient.SendClientHello(), 0);
 
         initialStage.FrameWriter.WritePaddingUntil(1200);
 
@@ -336,8 +394,8 @@ public sealed class QuicConnection {
     }
 
     enum State {
-        Null,
-        Connected,
+        Initial,
+        Handshake,
         Idle
     }
 }

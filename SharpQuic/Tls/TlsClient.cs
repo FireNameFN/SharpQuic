@@ -15,10 +15,6 @@ using SharpQuic.Tls.Messages;
 namespace SharpQuic.Tls;
 
 public sealed class TlsClient {
-    public IFragmentWriter InitialFragmentWriter { get; set; }
-
-    public IFragmentWriter HandshakeFragmentWriter { get; set; }
-
     public TlsState State { get; private set; }
 
     public CipherSuite CipherSuite { get; private set; }
@@ -121,7 +117,7 @@ public sealed class TlsClient {
         hash = null;
     }
 
-    public void SendClientHello() {
+    public byte[] SendClientHello() {
         byte[] key = new byte[32];
 
         ((X25519PublicKeyParameters)keyPair.Public).Encode(key);
@@ -143,12 +139,12 @@ public sealed class TlsClient {
             Parameters = parameters
         };
 
-        InitialFragmentWriter.WriteFragment(GetHandshake(message));
-
         State = TlsState.WaitServerHello;
+
+        return GetHandshake(message);
     }
 
-    public void SendServerHello() {
+    public byte[] SendServerHello() {
         byte[] key = new byte[32];
 
         ((X25519PublicKeyParameters)keyPair.Public).Encode(key);
@@ -158,10 +154,10 @@ public sealed class TlsClient {
             KeyShare = [new(NamedGroup.X25519, key)]
         };
 
-        InitialFragmentWriter.WriteFragment(GetHandshake(message));
+        return GetHandshake(message);
     }
 
-    public void SendServerHandshake() {
+    public byte[] SendServerHandshake() {
         MemoryStream stream = new();
 
         EncryptedExtensionsMessage encryptedExtensionsMessage = new() {
@@ -189,17 +185,17 @@ public sealed class TlsClient {
 
         stream.Write(GetHandshake(finishedMessage));
 
-        HandshakeFragmentWriter.WriteFragment(stream.ToArray());
-
         State = TlsState.WaitClientFinished;
+
+        return stream.ToArray();
     }
 
-    public void SendClientFinished() {
+    public byte[] SendClientFinished() {
         HashAlgorithmName name = HashUtils.GetName(CipherSuite);
 
         FinishedMessage finishedMessage = FinishedMessage.Create(name, GetMessagesHash(name), clientHandshakeSecret);
 
-        HandshakeFragmentWriter.WriteFragment(GetHandshake(finishedMessage));
+        return GetHandshake(finishedMessage);
     }
 
     byte[] GetHandshake(IMessage message) {

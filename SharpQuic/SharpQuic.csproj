@@ -3,11 +3,15 @@
   <PropertyGroup>
     <OutputType>Library</OutputType>
     <TargetFramework>net8.0</TargetFramework>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageOutputPath>C:/Works/Publish/SharpQuic</PackageOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.4.0" />
-    <PackageReference Include="System.IO.Pipelines" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

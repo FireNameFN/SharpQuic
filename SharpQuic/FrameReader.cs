@@ -20,6 +20,7 @@ public sealed class FrameReader {
             FrameType.Crypto => ReadCrypto(),
             FrameType.NewToken => ReadNewToken(),
             >= FrameType.Stream and <= FrameType.StreamMax => ReadStream(type),
+            FrameType.MaxStreamData => ReadMaxStreamData(),
             FrameType.MaxStreams => ReadMaxStreams(),
             FrameType.NewConnectionId => ReadNewConnectionId(),
             FrameType.ConnectionClose => ReadConnectionClose(false),
@@ -86,9 +87,21 @@ public sealed class FrameReader {
 
         return new StreamFrame() {
             Id = id,
+            Fin = type.HasFlag(FrameType.StreamFin),
             Offset = offset,
             Length = length,
             Data = data
+        };
+    }
+
+    MaxStreamDataFrame ReadMaxStreamData() {
+        ulong id = Serializer.ReadVariableLength(stream).Value;
+
+        ulong maxStreamData = Serializer.ReadVariableLength(stream).Value;
+
+        return new MaxStreamDataFrame() {
+            Id = id,
+            MaxStreamData = maxStreamData
         };
     }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -20,6 +21,8 @@ public sealed class CutStream(int bufferLength) {
     public ulong MaxData => Offset + (ulong)buffer.Length;
 
     public int Length => regions.Count > 0 ? (int)(regions[0].Max - Offset) : 0;
+
+    public event Func<Task> MaxDataIncreased;
 
     public void Write(ReadOnlySpan<byte> data, ulong offset) {
         semaphore.Wait();
@@ -96,6 +99,9 @@ public sealed class CutStream(int bufferLength) {
                 readSemaphore.Release();
 
             semaphore.Release();
+
+            if(MaxDataIncreased is not null)
+                await Task.WhenAll(MaxDataIncreased.GetInvocationList().Select(subscriber => ((Func<Task>)subscriber).Invoke()));
         }
     }
 

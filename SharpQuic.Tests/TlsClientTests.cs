@@ -17,36 +17,13 @@ public class TlsClientTests {
         
         X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
 
-        FrameWriter clientInitialPacketWriter = new();
-        FrameWriter clientHandshakePacketWriter = new();
-        FrameWriter serverInitialPacketWriter = new();
-        FrameWriter serverHandshakePacketWriter = new();
+        TlsClient client = new(new() { InitialSourceConnectionId = [] }, ["test"]);
 
-        TlsClient client = new(new() { InitialSourceConnectionId = [] }, ["test"]) {
-            InitialFragmentWriter = clientInitialPacketWriter,
-            HandshakeFragmentWriter = clientHandshakePacketWriter
-        };
+        TlsClient server = new(new() { InitialSourceConnectionId = [] }, ["test"], [certificate]);
 
-        client.SendClientHello();
+        server.TryReceiveHandshake(new MemoryStream(client.SendClientHello()));
 
-        TlsClient server = new(new() { InitialSourceConnectionId = [] }, ["test"], [certificate]) {
-            InitialFragmentWriter = serverInitialPacketWriter,
-            HandshakeFragmentWriter = serverHandshakePacketWriter
-        };
-
-        FrameReader reader = new() {
-            stream = new MemoryStream(clientInitialPacketWriter.ToPayload())
-        };
-
-        byte[] data = ((CryptoFrame)reader.Read()).Data;
-
-        server.TryReceiveHandshake(new MemoryStream(data));
-
-        server.SendServerHello();
-
-        reader.stream = new MemoryStream(serverInitialPacketWriter.ToPayload());
-
-        MemoryStream stream = new(((CryptoFrame)reader.Read()).Data);
+        MemoryStream stream = new(server.SendServerHello());
 
         while(stream.Position < stream.Length)
             client.TryReceiveHandshake(stream);
@@ -59,11 +36,7 @@ public class TlsClientTests {
         Assert.That(client.clientHandshakeSecret.SequenceEqual(server.clientHandshakeSecret));
         Assert.That(client.serverHandshakeSecret.SequenceEqual(server.serverHandshakeSecret));
 
-        server.SendServerHandshake();
-
-        reader.stream = new MemoryStream(serverHandshakePacketWriter.ToPayload());
-
-        stream = new(((CryptoFrame)reader.Read()).Data);
+        stream = new(server.SendServerHandshake());
 
         while(stream.Position < stream.Length)
             client.TryReceiveHandshake(stream);

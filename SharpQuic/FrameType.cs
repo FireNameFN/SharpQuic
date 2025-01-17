@@ -9,6 +9,7 @@ public enum FrameType : ulong {
     StreamOffset = 0b1100,
     StreamLength = 0b1010,
     StreamFin = 0b1001,
+    MaxStreamData = 0x11,
     MaxStreams = 0x12,
     NewConnectionId = 0x18,
     ConnectionClose = 0x1C,

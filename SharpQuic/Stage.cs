@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using SharpQuic.IO;
 
 namespace SharpQuic;
@@ -24,6 +25,10 @@ public sealed class Stage {
         this.ackEliciting |= ackEliciting;
     }
 
+    public uint GetNextPacketNumber() {
+        return Interlocked.Increment(ref nextPacketNumber);
+    }
+
     public void Write(PacketWriter packetWriter, PacketType type, byte[] token = null) {
         if(!FrameWriter.HasPayload && !ackEliciting)
             return;
@@ -32,10 +37,12 @@ public sealed class Stage {
             FrameWriter.WriteAck(acks);
 
             acks.Clear();
+            
+            ackEliciting = false;
         }
 
         FrameWriter.WritePaddingUntil(20);
 
-        packetWriter.Write(type, nextPacketNumber++, FrameWriter.ToPayload(), token);
+        packetWriter.Write(type, GetNextPacketNumber(), FrameWriter.ToPayload(), token);
     }
 }
