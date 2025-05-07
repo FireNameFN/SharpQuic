@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 using DNS.Protocol;
 using NUnit.Framework;
@@ -11,11 +12,14 @@ namespace SharpQuic.Tests;
 public class DoqTests {
     [Test]
     public async Task ConnectToAdGuardDoqAsyncTest() {
+        CancellationTokenSource source = new(5000);
+
         IPHostEntry entry = await Dns.GetHostEntryAsync("dns.adguard-dns.com");
         
         QuicConnection connection = await QuicConnection.ConnectAsync(new() {
             Point = new(entry.AddressList[0], 853),
-            Protocols = ["doq"]
+            Protocols = ["doq"],
+            CancellationToken = source.Token
         });
 
         QuicStream stream = connection.OpenBidirectionalStream();

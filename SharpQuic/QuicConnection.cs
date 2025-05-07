@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
 using SharpQuic.Frames;
 using SharpQuic.IO;
@@ -37,7 +38,7 @@ public sealed class QuicConnection {
 
     readonly TaskCompletionSource ready = new();
 
-    public readonly TaskCompletionSource<byte[]> data = new();
+    readonly CancellationToken cancellationToken;
 
     State state;
 
@@ -67,6 +68,8 @@ public sealed class QuicConnection {
 
         sourceConnectionId = configuration.Parameters.InitialSourceConnectionId;
         destinationConnectionId = RandomNumberGenerator.GetBytes(8);
+        
+        cancellationToken = configuration.CancellationToken;
     }
 
     public static async Task<QuicConnection> ConnectAsync(QuicConfiguration configuration) {
@@ -140,6 +143,9 @@ public sealed class QuicConnection {
     }
 
     internal ValueTask<int> SendAsync(PacketWriter packetWriter) {
+        if(packetWriter.Length < 1)
+            return ValueTask.FromResult(0);
+
         byte[] datagram = packetWriter.ToDatagram();
 
         Console.WriteLine($"Sending datagram: {datagram.Length}");
@@ -177,7 +183,7 @@ public sealed class QuicConnection {
             while(true) {
                 Console.WriteLine("Receiving");
 
-                UdpReceiveResult result = await client.ReceiveAsync();
+                UdpReceiveResult result = await client.ReceiveAsync(cancellationToken);
 
                 Console.WriteLine($"Received datagram: {result.Buffer.Length}");
 
