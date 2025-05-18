@@ -22,35 +22,32 @@ public sealed class ProbeTimeoutTimer {
             while(true) {
                 long next = Math.Min(connection.initialStage?.ProbeTimeout ?? long.MaxValue, Math.Min(connection.handshakeStage?.ProbeTimeout ?? long.MaxValue, connection.applicationStage?.ProbeTimeout ?? long.MaxValue));
 
-                Console.WriteLine($"Initial: {connection.initialStage?.ProbeTimeout}. Handshale: {connection.handshakeStage?.ProbeTimeout}. Application: {connection.applicationStage?.ProbeTimeout}");
+                Console.WriteLine($"Initial: {connection.initialStage?.ProbeTimeout}. Handshake: {connection.handshakeStage?.ProbeTimeout}. Application: {connection.applicationStage?.ProbeTimeout}");
                 Console.WriteLine($"Min: {min}. Next: {next}");
 
                 if(next <= min) {
                     Console.WriteLine("Probe");
 
-                    Stage stage;
-
                     if(connection.initialStage?.ProbeTimeout <= min)
-                        stage = connection.initialStage;
-                    else if(connection.handshakeStage?.ProbeTimeout <= min)
-                        stage = connection.handshakeStage;
-                    else
-                        stage = connection.applicationStage;
+                        await connection.initialStage.SendProbe();
 
-                    await stage.SendProbe();
+                    if(connection.handshakeStage?.ProbeTimeout <= min)
+                        await connection.handshakeStage.SendProbe();
 
-                    next = stage.ProbeTimeout;
+                    if(connection.applicationStage?.ProbeTimeout <= min)
+                        await connection.applicationStage.SendProbe();
+                } else {
+                    int time = (int)(next - Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency);
+
+                    Console.WriteLine($"Sleeping {time}");
+
+                    if(time > 0)
+                        await Task.Delay(time);
+
+                    Console.WriteLine("Timer");
                 }
 
                 min = next;
-
-                int time = (int)(next - Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency);
-
-                Console.WriteLine($"Sleeping {time}");
-
-                await Task.Delay(time);
-
-                Console.WriteLine("Timer");
             }
         } catch(Exception e) {
             Console.WriteLine(e);

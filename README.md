@@ -20,6 +20,7 @@ We can connect to AdGuard DoQ server and receive some addresses.
 - [ ] Throw right errors and CONNECTION_CLOSE
 - [ ] Own cryptography (ECDHE)
 - [X] Loss recovery
+- [ ] Congestion control
 - [ ] ...
 
 ## Authors

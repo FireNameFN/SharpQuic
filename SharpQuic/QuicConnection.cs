@@ -166,7 +166,7 @@ public sealed class QuicConnection {
 
         Memory<byte> datagram = packetWriter.ToDatagram();
 
-        if(state == State.Idle && Random.Shared.NextDouble() < debugOutputPacketLoss) {
+        if(Random.Shared.NextDouble() < debugOutputPacketLoss) {
             Console.WriteLine($"Losing datagram: {datagram.Length}");
             
             return ValueTask.FromResult(0);
@@ -208,6 +208,8 @@ public sealed class QuicConnection {
 
     async Task RunnerAsync() {
         try {
+            Console.WriteLine("Test");
+
             while(true) {
                 Console.WriteLine("Receiving");
 
@@ -215,7 +217,7 @@ public sealed class QuicConnection {
 
                 Console.WriteLine($"Time: {(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMilliseconds}");
 
-                if(state == State.Idle && Random.Shared.NextDouble() < debugInputPacketLoss) {
+                if(Random.Shared.NextDouble() < debugInputPacketLoss) {
                     Console.WriteLine($"Losed datagram: {result.Buffer.Length}");
                     
                     continue;
@@ -331,6 +333,8 @@ public sealed class QuicConnection {
 
                     CutInputStreamReader cutStreamReader = new(cryptoStream);
 
+                    Console.WriteLine($"Got CRYPTO to {cryptoFrame.Offset + (ulong)cryptoFrame.Data.Length}. Available to read: {cutStreamReader.Length}");
+
                     while(cutStreamReader.Position < cutStreamReader.Length)
                         if(tlsClient.TryReceiveHandshake(cutStreamReader))
                             cryptoStream.AdvanceTo(cutStreamReader.Offset);
@@ -366,7 +370,7 @@ public sealed class QuicConnection {
                     initialStage = null;
                     handshakeStage = null;
 
-                    applicationStage.CalculateProbeTimeout();
+                    applicationStage.ProbeTimeoutEnabled = true;
 
                     break;
             }

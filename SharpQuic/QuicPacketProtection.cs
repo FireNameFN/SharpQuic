@@ -139,6 +139,9 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
             if(packet is null)
                 return null;
+
+            if(applicationKeySet is null)
+                return null;
         }
 
         KeySet keySet = packet switch {

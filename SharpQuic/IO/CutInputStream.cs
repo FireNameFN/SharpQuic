@@ -20,7 +20,7 @@ public sealed class CutInputStream(int bufferLength) {
 
     public ulong MaxData => Offset + (ulong)buffer.Length;
 
-    public int Length => regions.Count > 0 ? (int)(regions[0].Max - Offset) : 0; // TODO maybe bug bacause don't check that regions[0].Min == Offset
+    public int Length => regions.Count > 0 && regions[0].Min <= Offset ? (int)(regions[0].Max - Offset) : 0;
 
     public event Func<Task> MaxDataIncreased;
 

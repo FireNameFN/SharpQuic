@@ -30,6 +30,8 @@ public sealed class Stage {
 
     public long ProbeTimeout { get; private set; }
 
+    public bool ProbeTimeoutEnabled { get; set; } = true;
+
     readonly StageType type;
 
     readonly SortedSet<uint> acks = [];
@@ -62,6 +64,9 @@ public sealed class Stage {
         this.connection = connection;
         packetWriter = new(connection);
         this.type = type;
+
+        if(type == StageType.Application)
+            ProbeTimeoutEnabled = false;
 
         CalculateProbeTimeout();
     }
@@ -137,6 +142,9 @@ public sealed class Stage {
                 FindAndRemoveInFlightPacket(frame.LargestAcknowledged - back);
         }
 
+        if(ackEliciting)
+            CalculateProbeTimeout();
+
         bool first = latestRtt < 0;
 
         latestRtt = (int)((Stopwatch.GetTimestamp() - sendTime) * 1000 / Stopwatch.Frequency);
@@ -170,8 +178,6 @@ public sealed class Stage {
                 Console.WriteLine($"Smoothed RTT: {smoothedRtt}");
                 Console.WriteLine($"RTT Var: {rttVar}");
             }
-
-            CalculateProbeTimeout();
         }
 
         long time = Stopwatch.GetTimestamp();
@@ -216,7 +222,7 @@ public sealed class Stage {
                 if(packet.PacketType == PacketType.OneRtt)
                     return connection.StreamPacketLostAsync(number, packet.StreamId);
 
-                return SendCrypto(packet.Offset, packet.Length);
+                return SendCrypto(packet.Offset, packet.Length, packet.Token);
             }
 
             if(acks.Count < 1)
@@ -224,7 +230,7 @@ public sealed class Stage {
 
             number = GetNextPacketNumber(FrameWriter.AckEliciting);
 
-            packets.Add(number, new([..acks], packet.PacketType, 0, 0, 0));
+            packets.Add(number, new([..acks], packet.PacketType, 0, 0, 0, null));
 
             FrameWriter.WriteAck(acks);
             
@@ -253,7 +259,7 @@ public sealed class Stage {
     public uint GetNextPacketNumber(bool ackEliciting, ulong streamId) {
         uint number = GetNextPacketNumber(ackEliciting);
 
-        packets.Add(number, new(null, PacketType.OneRtt, streamId, 0, 0));
+        packets.Add(number, new(null, PacketType.OneRtt, streamId, 0, 0, null));
 
         return number;
     }
@@ -264,7 +270,7 @@ public sealed class Stage {
 
         uint number = GetNextPacketNumber(FrameWriter.AckEliciting);
 
-        packets.Add(number, new([..acks], type, 0, 0, 0));
+        packets.Add(number, new([..acks], type, 0, 0, 0, null));
 
         if(acks.Count > 0) {
             FrameWriter.WriteAck(acks);
@@ -290,7 +296,7 @@ public sealed class Stage {
             _ => PacketType.OneRtt
         };
 
-        packets.Add(number, new(null, packetType, 0, 0, data.Length));
+        packets.Add(number, new(null, packetType, 0, 0, data.Length, clientHello ? token ?? [] : null));
 
         FrameWriter.WriteCrypto(data, 0);
 
@@ -300,7 +306,7 @@ public sealed class Stage {
         connection.packetWriter.Write(packetType, number, FrameWriter.ToPayload(), token);
     }
 
-    public ValueTask<int> SendCrypto(ulong offset, int length) {
+    public ValueTask<int> SendCrypto(ulong offset, int length, byte[] token) {
         uint number = GetNextPacketNumber(FrameWriter.AckEliciting);
 
         Console.WriteLine($"Crypto {type}");
@@ -311,7 +317,7 @@ public sealed class Stage {
             _ => PacketType.OneRtt
         };
 
-        packets.Add(number, new(null, packetType, 0, offset, length));
+        packets.Add(number, new(null, packetType, 0, offset, length, token));
         
         Span<byte> data = stackalloc byte[length];
 
@@ -319,12 +325,18 @@ public sealed class Stage {
 
         FrameWriter.WriteCrypto(data, 0);
 
-        packetWriter.Write(packetType, number, FrameWriter.ToPayload(), null);
+        if(token is not null)
+            FrameWriter.WritePaddingUntil(1200);
+
+        packetWriter.Write(packetType, number, FrameWriter.ToPayload(), token);
 
         return connection.SendAsync(packetWriter);
     }
 
     public ValueTask<int> SendProbe() {
+        if(type == StageType.Initial && latestRtt < 0)
+            return SendCrypto(packets[nextPacketNumber].Offset, packets[nextPacketNumber].Length, packets[nextPacketNumber].Token);
+
         uint number = GetNextPacketNumber(FrameWriter.AckEliciting);
 
         Console.WriteLine($"Probe {type}");
@@ -335,7 +347,7 @@ public sealed class Stage {
             _ => PacketType.OneRtt
         };
 
-        packets.Add(number, new([..acks], packetType, 0, 0, 0));
+        packets.Add(number, new([..acks], packetType, 0, 0, 0, null));
 
         if(acks.Count > 0)
             FrameWriter.WriteAck(acks);
@@ -352,6 +364,9 @@ public sealed class Stage {
     }
 
     public void CalculateProbeTimeout() {
+        if(!ProbeTimeoutEnabled)
+            ProbeTimeout = long.MaxValue;
+
         Console.WriteLine(smoothedRtt + Math.Max(rttVar * 4, Granularity) + (type == StageType.Application ? MaxAckDelay : 0));
 
         ProbeTimeout = (Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency) + smoothedRtt + Math.Max(rttVar * 4, Granularity) + (type == StageType.Application ? MaxAckDelay : 0);
@@ -359,5 +374,5 @@ public sealed class Stage {
 
     readonly record struct InFlightPacket(uint Number, bool AckEliciting, long SendTime);
 
-    readonly record struct PacketInfo(uint[] Acks, PacketType PacketType, ulong StreamId, ulong Offset, int Length);
+    readonly record struct PacketInfo(uint[] Acks, PacketType PacketType, ulong StreamId, ulong Offset, int Length, byte[] Token);
 }

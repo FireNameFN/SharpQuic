@@ -10,9 +10,9 @@ namespace SharpQuic.Tests;
 
 [TestFixture]
 public class DoqTests {
-    [Test, Repeat(100)]
+    [Test]
     public async Task ConnectToAdGuardDoqAsyncTest() {
-        CancellationTokenSource source = new(4000);
+        CancellationTokenSource source = new(20000);
 
         IPHostEntry entry = await Dns.GetHostEntryAsync("dns.adguard-dns.com");
         
@@ -20,8 +20,8 @@ public class DoqTests {
             Point = new(entry.AddressList[0], 853),
             Protocols = ["doq"],
             CancellationToken = source.Token,
-            DebugInputPacketLoss = 0.0,
-            DebugOutputPacketLoss = 0.0
+            DebugInputPacketLoss = 0.5,
+            DebugOutputPacketLoss = 0.5
         });
 
         string[] addresses = [
