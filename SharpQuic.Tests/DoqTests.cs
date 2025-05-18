@@ -10,51 +10,62 @@ namespace SharpQuic.Tests;
 
 [TestFixture]
 public class DoqTests {
-    [Test]
+    [Test, Repeat(100)]
     public async Task ConnectToAdGuardDoqAsyncTest() {
-        CancellationTokenSource source = new(5000);
+        CancellationTokenSource source = new(4000);
 
         IPHostEntry entry = await Dns.GetHostEntryAsync("dns.adguard-dns.com");
         
         QuicConnection connection = await QuicConnection.ConnectAsync(new() {
             Point = new(entry.AddressList[0], 853),
             Protocols = ["doq"],
-            CancellationToken = source.Token
+            CancellationToken = source.Token,
+            DebugInputPacketLoss = 0.0,
+            DebugOutputPacketLoss = 0.0
         });
 
-        QuicStream stream = connection.OpenBidirectionalStream();
+        string[] addresses = [
+            "dns.adguard-dns.com",
+            "google.com",
+            "youtube.com",
+            "twitch.tv"
+        ];
 
-        Request request = new() {
-            Id = 0,
-            RecursionDesired = true,
-            Questions = {
-                new(new("dns.adguard-dns.com"))
-            }
-        };
+        foreach(string address in addresses) {
+            QuicStream stream = connection.OpenBidirectionalStream();
 
-        Console.WriteLine(request);
+            Request request = new() {
+                Id = 0,
+                RecursionDesired = true,
+                Questions = {
+                    new(new(address))
+                }
+            };
 
-        byte[] data = request.ToArray();
+            Console.WriteLine(request);
 
-        byte[] lengthArray = new byte[sizeof(ushort)];
+            byte[] data = request.ToArray();
 
-        BinaryPrimitives.WriteUInt16BigEndian(lengthArray, (ushort)data.Length);
+            byte[] lengthArray = new byte[sizeof(ushort)];
 
-        data = [..lengthArray, ..data];
+            BinaryPrimitives.WriteUInt16BigEndian(lengthArray, (ushort)data.Length);
 
-        await stream.WriteAsync(data, true);
+            data = [..lengthArray, ..data];
 
-        await stream.ReadAsync(lengthArray);
+            await stream.WriteAsync(data, true);
 
-        int length = BinaryPrimitives.ReadUInt16BigEndian(lengthArray);
+            await stream.ReadAsync(lengthArray);
 
-        data = new byte[length];
+            int length = BinaryPrimitives.ReadUInt16BigEndian(lengthArray);
 
-        await stream.ReadAsync(data);
+            data = new byte[length];
 
-        Response response = Response.FromArray(data);
+            await stream.ReadAsync(data);
 
-        Console.WriteLine(response);
+            Response response = Response.FromArray(data);
+
+            Console.WriteLine(response);
+        }
     }
 
     [Test, Explicit]

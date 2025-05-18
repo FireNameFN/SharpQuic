@@ -2,6 +2,7 @@ using System;
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
 
@@ -11,6 +12,8 @@ namespace SharpQuic.Tests;
 public class QuicStreamTests {
     [Test, Explicit]
     public async Task QuicStreamTestAsync() {
+        CancellationTokenSource timeoutSource = new(5000);
+
         byte[] data = new byte[8192];
 
         RandomNumberGenerator.Fill(data);
@@ -23,7 +26,8 @@ public class QuicStreamTests {
             try {
                 client = await QuicConnection.ConnectAsync(new() {
                     Point = IPEndPoint.Parse("127.0.0.1:50000"),
-                    Protocols = ["test"]
+                    Protocols = ["test"],
+                    CancellationToken = timeoutSource.Token
                 });
 
                 QuicStream stream = client.OpenUnidirectionalStream();
@@ -43,7 +47,8 @@ public class QuicStreamTests {
         QuicConnection server = await QuicConnection.ListenAsync(new() {
             Point = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
-            CertificateChain = [certificate]
+            CertificateChain = [certificate],
+            CancellationToken = timeoutSource.Token
         });
 
         /*server.OnStream += stream => {

@@ -26,6 +26,10 @@ public static class QuicTransportParametersExtension {
 
         EncodeParameter(parametersStream, 0x09, parameters.InitialMaxStreamsUni);
 
+        EncodeParameter(parametersStream, 0x0a, (ulong)parameters.AckDelayExponent);
+
+        EncodeParameter(parametersStream, 0x0b, (ulong)parameters.MaxAckDelay);
+
         Serializer.WriteVariableLength(parametersStream, 0x0f);
         Serializer.WriteVariableLength(parametersStream, (ulong)parameters.InitialSourceConnectionId.Length);
         parametersStream.Write(parameters.InitialSourceConnectionId);
@@ -43,5 +47,37 @@ public static class QuicTransportParametersExtension {
         Serializer.WriteVariableLength(stream, id);
         Serializer.WriteVariableLength(stream, (ulong)length);
         Serializer.WriteVariableLength(stream, value, length);
+    }
+
+    public static QuicTransportParameters Decode(Stream stream) {
+        QuicTransportParameters parameters = new();
+
+        int length = Serializer.ReadUInt16(stream);
+
+        long start = stream.Position;
+
+        while(stream.Position - start < length) {
+            ulong id = Serializer.ReadVariableLength(stream).Value;
+
+            switch(id) {
+                case 0x0a:
+                    Serializer.ReadVariableLength(stream);
+                    parameters.AckDelayExponent = (int)Serializer.ReadVariableLength(stream).Value;
+
+                    break;
+                case 0x0b:
+                    Serializer.ReadVariableLength(stream);
+                    parameters.MaxAckDelay = (int)Serializer.ReadVariableLength(stream).Value;
+
+                    break;
+                default:
+                    long parameterLength = (long)Serializer.ReadVariableLength(stream).Value;
+                    stream.Position += parameterLength;
+                    
+                    break;
+            }
+        }
+
+        return parameters;
     }
 }

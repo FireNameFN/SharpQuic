@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace SharpQuic.IO;
 
-public sealed class CutStream(int bufferLength) {
+public sealed class CutInputStream(int bufferLength) {
     readonly byte[] buffer = new byte[bufferLength];
 
     readonly List<(ulong Min, ulong Max)> regions = [];
@@ -20,7 +20,7 @@ public sealed class CutStream(int bufferLength) {
 
     public ulong MaxData => Offset + (ulong)buffer.Length;
 
-    public int Length => regions.Count > 0 ? (int)(regions[0].Max - Offset) : 0;
+    public int Length => regions.Count > 0 ? (int)(regions[0].Max - Offset) : 0; // TODO maybe bug bacause don't check that regions[0].Min == Offset
 
     public event Func<Task> MaxDataIncreased;
 
@@ -72,13 +72,13 @@ public sealed class CutStream(int bufferLength) {
         semaphore.Release();
     }
 
-    public async Task ReadAsync(Memory<byte> memory) {
+    public async Task ReadAsync(Memory<byte> memory, CancellationToken cancellationToken = default) {
         int memoryOffset = 0;
 
         while(memoryOffset < memory.Length) {
-            await readSemaphore.WaitAsync();
+            await readSemaphore.WaitAsync(cancellationToken);
 
-            await semaphore.WaitAsync();
+            await semaphore.WaitAsync(cancellationToken);
 
             int length = Math.Min(memory.Length, (int)(regions[0].Max - Offset));
 
@@ -94,7 +94,7 @@ public sealed class CutStream(int bufferLength) {
                 regions.RemoveAt(0);
 
                 if(readSemaphore.CurrentCount > 0)
-                    await readSemaphore.WaitAsync();
+                    await readSemaphore.WaitAsync(cancellationToken);
             } else if(readSemaphore.CurrentCount < 1)
                 readSemaphore.Release();
 

@@ -19,6 +19,8 @@ public sealed class TlsClient {
 
     public CipherSuite CipherSuite { get; private set; }
 
+    public QuicTransportParameters PeerParameters { get; private set; }
+
     readonly QuicTransportParameters parameters;
 
     string[] protocols;
@@ -308,6 +310,8 @@ public sealed class TlsClient {
         if(message.LegacySessionId.Length > 0)
             throw new QuicException();
 
+        PeerParameters = message.Parameters;
+
         State = TlsState.WaitClientFinished;
     }
 
@@ -325,6 +329,8 @@ public sealed class TlsClient {
     void ReceiveEncryptedExtensions(EncryptedExtensionsMessage message) {
         if(State != TlsState.WaitEncryptedExtensions)
             throw new QuicException();
+
+        PeerParameters = message.Parameters;
 
         State = TlsState.WaitCertificate;
     }

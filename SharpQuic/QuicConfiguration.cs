@@ -14,4 +14,8 @@ public readonly struct QuicConfiguration() {
     public QuicTransportParameters Parameters { get; init; } = new();
 
     public CancellationToken CancellationToken { get; init; }
+
+    public double DebugInputPacketLoss { get; init; }
+
+    public double DebugOutputPacketLoss { get; init; }
 }

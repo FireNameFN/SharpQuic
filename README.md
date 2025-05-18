@@ -1,5 +1,9 @@
 # SharpQuic
-[QUIC-TRANSPORT](https://www.rfc-editor.org/rfc/rfc9000.html) and [QUIC-TLS](https://www.rfc-editor.org/rfc/rfc9001.html) implementation in pure C# compatible with other implementations.
+[QUIC](https://quicwg.org/) protocol implementation in pure C# compatible with other implementations.
+
+- [X] Encryption
+- [X] Loss recovery
+- [X] Compatibility
 
 > [!WARNING]
 > Not ready for use. Work in progress.
@@ -15,6 +19,7 @@ We can connect to AdGuard DoQ server and receive some addresses.
 - [X] Basic QUIC packet exchange
 - [ ] Throw right errors and CONNECTION_CLOSE
 - [ ] Own cryptography (ECDHE)
+- [X] Loss recovery
 - [ ] ...
 
 ## Authors

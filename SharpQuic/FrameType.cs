@@ -1,6 +1,7 @@
 namespace SharpQuic;
 
 public enum FrameType : ulong {
+    Ping = 0x01,
     Ack = 0x02,
     Crypto = 0x06,
     NewToken = 0x07,

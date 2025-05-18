@@ -70,15 +70,15 @@ public sealed class ServerHelloMessage : IMessage {
         while(stream.Position - start < length) {
             ExtensionType type = (ExtensionType)Serializer.ReadUInt16(stream);
 
-            int extensionLength = Serializer.ReadUInt16(stream);
-
             switch(type) {
                 case ExtensionType.KeyShare:
                     KeyShare = [KeyShareExtension.DecodeServer(stream)];
                     
                     break;
                 default:
+                    ushort extensionLength = Serializer.ReadUInt16(stream);
                     stream.Position += extensionLength;
+
                     break;
             }
         }

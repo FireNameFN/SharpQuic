@@ -90,15 +90,19 @@ public sealed class ClientHelloMessage : IMessage {
         while(stream.Position - start < length) {
             ExtensionType type = (ExtensionType)Serializer.ReadUInt16(stream);
 
-            int extensionLength = Serializer.ReadUInt16(stream);
-
             switch(type) {
                 case ExtensionType.KeyShare:
                     KeyShare = KeyShareExtension.DecodeClient(stream);
                     
                     break;
+                case ExtensionType.QuicTransportParameters:
+                    Parameters = QuicTransportParametersExtension.Decode(stream);
+
+                    break;
                 default:
+                    ushort extensionLength = Serializer.ReadUInt16(stream);
                     stream.Position += extensionLength;
+
                     break;
             }
         }

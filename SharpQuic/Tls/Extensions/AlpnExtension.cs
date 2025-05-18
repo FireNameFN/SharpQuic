@@ -24,6 +24,7 @@ public static class AlpnExtension {
     }
 
     public static string[] Decode(Stream stream) {
+        Serializer.ReadUInt16(stream);
         int length = Serializer.ReadUInt16(stream);
 
         long start = stream.Position;

@@ -3,7 +3,7 @@ using System.IO;
 
 namespace SharpQuic.IO;
 
-public sealed class CutStreamReader(CutStream stream) : Stream {
+public sealed class CutInputStreamReader(CutInputStream stream) : Stream {
     public override bool CanRead => true;
 
     public override bool CanSeek => false;
@@ -17,7 +17,7 @@ public sealed class CutStreamReader(CutStream stream) : Stream {
         set => Offset = (ulong)value;
     }
 
-    readonly CutStream stream = stream;
+    readonly CutInputStream stream = stream;
 
     public ulong Offset { get; private set; } = stream.Offset;
 

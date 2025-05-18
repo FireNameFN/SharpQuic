@@ -16,4 +16,8 @@ public class QuicTransportParameters() {
     public ulong InitialMaxStreamsBidi { get; set; } = 10;
 
     public ulong InitialMaxStreamsUni { get; set; } = 10;
+
+    public int AckDelayExponent { get; set; } = 3;
+
+    public int MaxAckDelay { get; set; } = 25;
 }

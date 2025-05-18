@@ -33,8 +33,8 @@ public sealed class PacketWriter {
         stream.Write(connection.protection.Protect(packet, connection.initialStage?.KeySet, connection.handshakeStage?.KeySet, connection.applicationStage?.KeySet));
     }
 
-    public byte[] ToDatagram() {
-        byte[] datagram = stream.ToArray();
+    public Memory<byte> ToDatagram() {
+        Memory<byte> datagram = stream.GetBuffer().AsMemory()[..(int)stream.Length];
 
         stream.SetLength(0);
 

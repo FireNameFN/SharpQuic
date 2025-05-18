@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -18,9 +19,13 @@ public sealed class QuicConnection {
 
     readonly TlsClient tlsClient;
 
+    readonly ProbeTimeoutTimer timer;
+
     internal readonly QuicPacketProtection protection;
 
     internal readonly QuicTransportParameters parameters;
+
+    internal QuicTransportParameters peerParameters;
 
     internal Stage initialStage;
 
@@ -28,7 +33,7 @@ public sealed class QuicConnection {
 
     internal Stage applicationStage;
 
-    readonly PacketWriter packetWriter;
+    internal readonly PacketWriter packetWriter;
 
     internal readonly EndpointType endpointType;
 
@@ -38,7 +43,11 @@ public sealed class QuicConnection {
 
     readonly TaskCompletionSource ready = new();
 
-    readonly CancellationToken cancellationToken;
+    internal readonly CancellationToken cancellationToken;
+
+    readonly double debugInputPacketLoss;
+
+    readonly double debugOutputPacketLoss;
 
     State state;
 
@@ -60,16 +69,21 @@ public sealed class QuicConnection {
 
         packetWriter = new(this);
 
-        initialStage = new() {
+        initialStage = new(this, StageType.Initial) {
             KeySet = new(CipherSuite.Aes128GcmSHA256)
         };
 
         tlsClient = new(configuration.Parameters, configuration.Protocols, configuration.CertificateChain);
 
+        timer = new(this);
+
         sourceConnectionId = configuration.Parameters.InitialSourceConnectionId;
         destinationConnectionId = RandomNumberGenerator.GetBytes(8);
         
         cancellationToken = configuration.CancellationToken;
+
+        debugInputPacketLoss = configuration.DebugInputPacketLoss;
+        debugOutputPacketLoss = configuration.DebugOutputPacketLoss;
     }
 
     public static async Task<QuicConnection> ConnectAsync(QuicConfiguration configuration) {
@@ -82,6 +96,8 @@ public sealed class QuicConnection {
         await connection.SendClientHelloAsync();
 
         await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
+
+        await connection.timer.StartAsync();
 
         await connection.ready.Task;
 
@@ -96,6 +112,8 @@ public sealed class QuicConnection {
         connection.client.Client.Bind(configuration.Point);
 
         await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
+
+        await connection.timer.StartAsync();
 
         await connection.ready.Task;
 
@@ -146,7 +164,13 @@ public sealed class QuicConnection {
         if(packetWriter.Length < 1)
             return ValueTask.FromResult(0);
 
-        byte[] datagram = packetWriter.ToDatagram();
+        Memory<byte> datagram = packetWriter.ToDatagram();
+
+        if(state == State.Idle && Random.Shared.NextDouble() < debugOutputPacketLoss) {
+            Console.WriteLine($"Losing datagram: {datagram.Length}");
+            
+            return ValueTask.FromResult(0);
+        }
 
         Console.WriteLine($"Sending datagram: {datagram.Length}");
 
@@ -154,9 +178,9 @@ public sealed class QuicConnection {
     }
 
     internal ValueTask<int> FlushAsync(byte[] token = null) {
-        initialStage?.Write(packetWriter, PacketType.Initial, token);
-        handshakeStage?.Write(packetWriter, PacketType.Handshake);
-        applicationStage?.Write(packetWriter, PacketType.OneRtt);
+        //initialStage?.Write(PacketType.Initial, token);
+        //handshakeStage?.Write(PacketType.Handshake);
+        //applicationStage?.Write(PacketType.OneRtt);
 
         return SendAsync(packetWriter);
     }
@@ -178,12 +202,24 @@ public sealed class QuicConnection {
         }
     }
 
+    internal ValueTask<int> StreamPacketLostAsync(uint number, ulong streamId) {
+        return streams[streamId].PacketLostAsync(number);
+    }
+
     async Task RunnerAsync() {
         try {
             while(true) {
                 Console.WriteLine("Receiving");
 
                 UdpReceiveResult result = await client.ReceiveAsync(cancellationToken);
+
+                Console.WriteLine($"Time: {(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMilliseconds}");
+
+                if(state == State.Idle && Random.Shared.NextDouble() < debugInputPacketLoss) {
+                    Console.WriteLine($"Losed datagram: {result.Buffer.Length}");
+                    
+                    continue;
+                }
 
                 Console.WriteLine($"Received datagram: {result.Buffer.Length}");
 
@@ -266,20 +302,34 @@ public sealed class QuicConnection {
             }
 
             switch(frame) {
+                case AckFrame ackFrame:
+                    switch(packet.PacketType) {
+                        case PacketType.Initial:
+                            await initialStage.PeerAckAsync(ackFrame);
+                            break;
+                        case PacketType.Handshake:
+                            await handshakeStage.PeerAckAsync(ackFrame);
+                            break;
+                        case PacketType.OneRtt:
+                            await applicationStage.PeerAckAsync(ackFrame);
+                            break;
+                    }
+
+                    break;
                 case CryptoFrame cryptoFrame:
                     if(handshakeStage is not null && packet is InitialPacket || applicationStage is not null && packet is HandshakePacket)
                         break;
 
-                    CutStream cryptoStream = packet.PacketType switch {
-                        PacketType.Initial => initialStage.CryptoStream,
-                        PacketType.Handshake => handshakeStage.CryptoStream,
-                        PacketType.OneRtt => applicationStage.CryptoStream,
+                    CutInputStream cryptoStream = packet.PacketType switch {
+                        PacketType.Initial => initialStage.CryptoInputStream,
+                        PacketType.Handshake => handshakeStage.CryptoInputStream,
+                        PacketType.OneRtt => applicationStage.CryptoInputStream,
                         _ => throw new QuicException(),
                     };
 
                     cryptoStream.Write(cryptoFrame.Data, cryptoFrame.Offset);
 
-                    CutStreamReader cutStreamReader = new(cryptoStream);
+                    CutInputStreamReader cutStreamReader = new(cryptoStream);
 
                     while(cutStreamReader.Position < cutStreamReader.Length)
                         if(tlsClient.TryReceiveHandshake(cutStreamReader))
@@ -316,6 +366,8 @@ public sealed class QuicConnection {
                     initialStage = null;
                     handshakeStage = null;
 
+                    applicationStage.CalculateProbeTimeout();
+
                     break;
             }
         }
@@ -335,14 +387,24 @@ public sealed class QuicConnection {
 
     async Task HandleHandshakeAsync() {
         if(state == State.Initial && tlsClient.State >= TlsClient.TlsState.WaitEncryptedExtensions) {
-            handshakeStage = new() {
+            handshakeStage = new(this, StageType.Handshake) {
                 KeySet = new(tlsClient.CipherSuite)
             };
 
             protection.CipherSuite = tlsClient.CipherSuite;
 
             if(endpointType == EndpointType.Server) {
-                initialStage.FrameWriter.WriteCrypto(tlsClient.SendServerHello(), 0);
+                peerParameters = tlsClient.PeerParameters;
+
+                initialStage.AckDelayExponent = peerParameters.AckDelayExponent;
+                handshakeStage.AckDelayExponent = peerParameters.AckDelayExponent;
+
+                initialStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
+                handshakeStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
+
+                //initialStage.FrameWriter.WriteCrypto(tlsClient.SendServerHello(), 0);
+
+                initialStage.WriteCrypto(tlsClient.SendServerHello());
                 
                 tlsClient.DeriveHandshakeSecrets();
 
@@ -350,7 +412,9 @@ public sealed class QuicConnection {
 
                 Console.WriteLine("Generated handshake keys.");
 
-                handshakeStage.FrameWriter.WriteCrypto(tlsClient.SendServerHandshake(), 0);
+                //handshakeStage.FrameWriter.WriteCrypto(tlsClient.SendServerHandshake(), 0);
+
+                handshakeStage.WriteCrypto(tlsClient.SendServerHandshake());
 
                 Console.WriteLine("Sending server handshake.");
 
@@ -367,12 +431,24 @@ public sealed class QuicConnection {
         }
 
         if(state == State.Handshake && tlsClient.State == TlsClient.TlsState.Connected) {
-            applicationStage = new() {
+            applicationStage = new(this, StageType.Application) {
                 KeySet = new(tlsClient.CipherSuite)
             };
 
             if(endpointType == EndpointType.Client) {
-                handshakeStage.FrameWriter.WriteCrypto(tlsClient.SendClientFinished(), 0);
+                peerParameters = tlsClient.PeerParameters;
+
+                initialStage.AckDelayExponent = peerParameters.AckDelayExponent;
+                handshakeStage.AckDelayExponent = peerParameters.AckDelayExponent;
+                applicationStage.AckDelayExponent = peerParameters.AckDelayExponent;
+
+                initialStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
+                handshakeStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
+                handshakeStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
+
+                //handshakeStage.FrameWriter.WriteCrypto(tlsClient.SendClientFinished(), 0);
+
+                handshakeStage.WriteCrypto(tlsClient.SendClientFinished());
 
                 await FlushAsync();
 
@@ -380,6 +456,10 @@ public sealed class QuicConnection {
 
                 applicationStage.KeySet.Generate(tlsClient.clientApplicationSecret, tlsClient.serverApplicationSecret);
             } else {
+                applicationStage.AckDelayExponent = peerParameters.AckDelayExponent;
+                
+                handshakeStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
+
                 tlsClient.DeriveApplicationSecrets();
 
                 applicationStage.KeySet.Generate(tlsClient.serverApplicationSecret, tlsClient.clientApplicationSecret);
@@ -392,9 +472,11 @@ public sealed class QuicConnection {
     }
 
     ValueTask<int> SendClientHelloAsync(byte[] token = null) {
-        initialStage.FrameWriter.WriteCrypto(tlsClient.SendClientHello(), 0);
+        //initialStage.FrameWriter.WriteCrypto(tlsClient.SendClientHello(), 0);
 
-        initialStage.FrameWriter.WritePaddingUntil(1200);
+        initialStage.WriteCrypto(tlsClient.SendClientHello(), true, token);
+
+        //initialStage.FrameWriter.WritePaddingUntil(1200);
 
         return FlushAsync(token);
     }

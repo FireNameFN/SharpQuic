@@ -33,14 +33,17 @@ public sealed class EncryptedExtensionsMessage : IMessage {
         while(stream.Position - start < length) {
             ExtensionType type = (ExtensionType)Serializer.ReadUInt16(stream);
 
-            int extensionLength = Serializer.ReadUInt16(stream);
-
             switch(type) {
                 case ExtensionType.ApplicationLayerProtocolNegotiation:
                     message.Protocol = AlpnExtension.Decode(stream)[0];
                     
                     break;
+                case ExtensionType.QuicTransportParameters:
+                    message.Parameters = QuicTransportParametersExtension.Decode(stream);
+
+                    break;
                 default:
+                    ushort extensionLength = Serializer.ReadUInt16(stream);
                     stream.Position += extensionLength;
                     break;
             }

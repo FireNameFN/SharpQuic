@@ -38,17 +38,25 @@ public static class KeyShareExtension {
     }
 
     public static KeyShareEntry[] DecodeClient(Stream stream) {
+        Serializer.ReadUInt16(stream);
+        
         int length = Serializer.ReadUInt16(stream) / 34;
 
         KeyShareEntry[] entries = new KeyShareEntry[length];
 
         for(int i = 0; i < length; i++)
-            entries[i] = DecodeServer(stream);
+            entries[i] = DecodeKey(stream);
 
         return entries;
     }
 
     public static KeyShareEntry DecodeServer(Stream stream) {
+        Serializer.ReadUInt16(stream);
+
+        return DecodeKey(stream);
+    }
+
+    static KeyShareEntry DecodeKey(Stream stream) {
         NamedGroup namedGroup = (NamedGroup)Serializer.ReadUInt16(stream);
 
         int length = Serializer.ReadUInt16(stream);

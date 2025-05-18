@@ -11,7 +11,7 @@ namespace SharpQuic.Tests;
 public class CutStreamTests {
     [Test]
     public async Task FillAsyncTest() {
-        CutStream array = new(1024);
+        CutInputStream array = new(1024);
 
         byte[] data = new byte[1024];
 
@@ -44,7 +44,7 @@ public class CutStreamTests {
 
     [Test, Repeat(1000)]
     public async Task BigReadAsyncTest() {
-        CutStream array = new(512);
+        CutInputStream array = new(512);
 
         byte[] data = new byte[2048];
 
@@ -67,7 +67,7 @@ public class CutStreamTests {
 
     [Test]
     public async Task SmallReadsAndWritesTest() {
-        CutStream stream = new(1024);
+        CutInputStream stream = new(1024);
 
         byte[] data = new byte[2048];
 

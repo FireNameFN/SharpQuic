@@ -16,6 +16,7 @@ public sealed class FrameReader {
 
         return type switch {
             0 => null,
+            FrameType.Ping => new PingFrame(),
             FrameType.Ack => ReadAck(),
             FrameType.Crypto => ReadCrypto(),
             FrameType.NewToken => ReadNewToken(),
@@ -31,17 +32,25 @@ public sealed class FrameReader {
     }
 
     Frame ReadAck() {
-        ulong largest = Serializer.ReadVariableLength(stream).Value;
-        ulong delay = Serializer.ReadVariableLength(stream).Value;
+        uint largest = (uint)Serializer.ReadVariableLength(stream).Value;
+        int delay = (int)Serializer.ReadVariableLength(stream).Value;
         int count = (int)Serializer.ReadVariableLength(stream).Value;
-        Serializer.ReadVariableLength(stream);
+        uint first = (uint)Serializer.ReadVariableLength(stream).Value;
 
-        for(int i = 0; i < count; i++) {
-            Serializer.ReadVariableLength(stream);
-            Serializer.ReadVariableLength(stream);
-        }
+        AckFrame frame = new() {
+            LargestAcknowledged = largest,
+            AckDelay = delay,
+            FirstAckRange = first,
+            AckRanges = new AckFrame.AckRange[count]
+        };
 
-        return new AckFrame();
+        for(int i = 0; i < count; i++)
+            frame.AckRanges[i] = new() {
+                Gap = (uint)Serializer.ReadVariableLength(stream).Value,
+                AckRangeLength = (uint)Serializer.ReadVariableLength(stream).Value
+            };
+
+        return frame;
     }
 
     Frame ReadCrypto() {
