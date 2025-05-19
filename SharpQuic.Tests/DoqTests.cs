@@ -11,7 +11,7 @@ namespace SharpQuic.Tests;
 [TestFixture]
 public class DoqTests {
     [Test]
-    public async Task ConnectToAdGuardDoqAsyncTest() {
+    public async Task ConnectToAdGuardDoqTestAsync() {
         CancellationTokenSource source = new(20000);
 
         IPHostEntry entry = await Dns.GetHostEntryAsync("dns.adguard-dns.com");
@@ -69,7 +69,7 @@ public class DoqTests {
     }
 
     [Test, Explicit]
-    public async Task ConnectToLocalDoqAsyncTest() {
+    public async Task ConnectToLocalDoqTestAsync() {
         QuicConnection connection = await QuicConnection.ConnectAsync(new() {
             Point = IPEndPoint.Parse("127.0.0.1:853"),
             Protocols = ["doq"]

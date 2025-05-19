@@ -14,7 +14,7 @@ using SharpQuic.Tls.Enums;
 
 namespace SharpQuic;
 
-public sealed class QuicConnection {
+public sealed class QuicConnection : IDisposable {
     readonly UdpClient client = new();
 
     readonly TlsClient tlsClient;
@@ -96,6 +96,8 @@ public sealed class QuicConnection {
         connection.client.Connect(configuration.Point);
 
         await connection.SendClientHelloAsync();
+
+        await connection.FlushAsync();
 
         await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
 
@@ -179,8 +181,20 @@ public sealed class QuicConnection {
         return client.SendAsync(datagram);
     }
 
+    internal ValueTask<int> FlushAsync() {
+        initialStage?.WriteAck(packetWriter, false);
+        handshakeStage?.WriteAck(packetWriter, false);
+        applicationStage?.WriteAck(packetWriter, false);
+
+        return SendAsync(packetWriter);
+    }
+
     internal ValueTask<int> StreamPacketLostAsync(uint number, ulong streamId) {
         return streams[streamId].PacketLostAsync(number);
+    }
+
+    internal void StreamPacketAck(uint number, ulong streamId) {
+        streams[streamId].PacketAck(number);
     }
 
     async Task RunnerAsync() {
@@ -236,7 +250,7 @@ public sealed class QuicConnection {
 
                     await HandleHandshakeAsync();
 
-                    await SendAsync(packetWriter);
+                    await FlushAsync();
                 }
             }
         } catch(Exception e) {
@@ -416,6 +430,8 @@ public sealed class QuicConnection {
 
                 await handshakeStage.WriteCryptoAsync(packetWriter, tlsClient.SendClientFinished());
 
+                await FlushAsync();
+
                 tlsClient.DeriveApplicationSecrets();
 
                 applicationStage.KeySet.Generate(tlsClient.clientApplicationSecret, tlsClient.serverApplicationSecret);
@@ -429,6 +445,8 @@ public sealed class QuicConnection {
                 applicationStage.KeySet.Generate(tlsClient.serverApplicationSecret, tlsClient.clientApplicationSecret);
             }
 
+            Console.WriteLine("Generated application keys.");
+
             ready.SetResult();
 
             state = State.Idle;
@@ -437,6 +455,10 @@ public sealed class QuicConnection {
 
     Task SendClientHelloAsync(byte[] token = null) {
         return initialStage.WriteCryptoAsync(packetWriter, tlsClient.SendClientHello(), token ?? []);
+    }
+
+    public void Dispose() {
+        client.Dispose();
     }
 
     enum State {

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpQuic.IO;
@@ -11,9 +12,9 @@ public sealed class QuicStream {
 
     readonly QuicConnection connection;
 
-    readonly CutInputStream inputStream = new(1024);
+    readonly CutInputStream inputStream = new(1024); // TODO Dispose
 
-    readonly CutOutputStream outputStream = new(102400);
+    readonly CutOutputStream outputStream = new(512);
 
     readonly Dictionary<uint, PacketInfo> packets = [];
 
@@ -25,7 +26,9 @@ public sealed class QuicStream {
 
     ulong peerMaxData = 1024;
 
-    readonly SemaphoreSlim semaphore = new(0, 1);
+    readonly SemaphoreSlim maxDataSemaphore = new(0, 1); // TODO Dispose
+
+    readonly SemaphoreSlim availableSemaphore = new(0, 1); // TODO Dispose
 
     bool peerClosed;
 
@@ -44,9 +47,65 @@ public sealed class QuicStream {
     }
 
     public async Task WriteAsync(ReadOnlyMemory<byte> data, bool close = false) {
-        outputStream.Write(data.Span);
-
         int position = 0;
+
+        ulong offset = this.offset;
+
+        ulong maxOffset = this.offset + (ulong)data.Length;
+        
+        while(offset < maxOffset) {
+            if((offset >= outputStream.MaxData || outputStream.Available > 0) && position < data.Length) {
+                if(outputStream.Available < 1)
+                    await availableSemaphore.WaitAsync(connection.cancellationToken);
+
+                int writeLength = Math.Min(outputStream.Available, data.Length - position);
+
+                outputStream.Write(data.Span.Slice(position, writeLength));
+
+                position += writeLength;
+            }
+
+            int length = Math.Min(1200, Math.Min((int)(peerMaxData - offset), (int)(outputStream.MaxData - offset)));
+
+            if(length > 0) {
+                await SendStreamAsync(offset, length, false);
+
+                offset += (ulong)length;
+            } else {
+                if(peerMaxData <= offset)
+                    await maxDataSemaphore.WaitAsync(connection.cancellationToken);
+                else
+                    throw new UnreachableException("Test?");
+            }
+        }
+
+        this.offset = maxOffset;
+
+        /*int position = 0;
+
+        while(position < data.Length) {
+            if((int)(outputStream.MaxData - offset) - position < 1 || outputStream.Available > 0) {
+                if(outputStream.Available < 1)
+                    await availableSemaphore.WaitAsync();
+
+                outputStream.Write(data.Span[position..Math.Min(outputStream.Available, data.Length - position)]);
+            }
+
+            int length = Math.Min(1200, Math.Min((int)(peerMaxData - offset) - position, (int)(outputStream.MaxData - offset) - position));
+            
+            if(length > 0) {
+                await SendStreamAsync(offset + (ulong)position, length, false);
+
+                position += length;
+            } else {
+                if((int)(peerMaxData - offset) - position < 1)
+                    await maxDataSemaphore.WaitAsync();
+            }
+        }
+        
+        offset += (ulong)data.Length;*/
+
+        /*int position = 0;
 
         while(position < data.Length) {
             int length = Math.Min(1200 - frameWriter.Length, (int)(peerMaxData - offset) - position);
@@ -54,35 +113,15 @@ public sealed class QuicStream {
             if(position + length > data.Length)
                 length = data.Length - position;
 
-            if(length < 1) {
+            if(length > 0) {
+                await SendStreamAsync(data.Slice(position, length).Span, offset + (ulong)position, position + length >= data.Length && close);
+
+                position += length;
+            } else
                 await semaphore.WaitAsync();
-
-                length = Math.Min(1200 - frameWriter.Length, (int)(peerMaxData - offset) - position);
-
-                if(position + length > data.Length)
-                    length = data.Length - position;
-            }
-
-            /*frameWriter.WriteStream(data.Slice(position, length).Span, Id, offset + (ulong)position, position + length >= data.Length && close);
-
-            frameWriter.WritePaddingUntil(1200);
-
-            position += length;
-
-            uint number = connection.applicationStage.GetNextPacketNumber(true);
-
-            packetWriter.Write(PacketType.OneRtt, number, frameWriter.ToPayload(), null);
-
-            packets.Add(number, new(true, offset + (ulong)position, length, position + length >= data.Length && close));
-
-            await connection.SendAsync(packetWriter);*/
-
-            await SendStreamAsync(data.Slice(position, length).Span, offset + (ulong)position, position + length >= data.Length && close);
-
-            position += length;
         }
 
-        offset += (ulong)data.Length;
+        offset += (ulong)data.Length;*/
 
         Console.WriteLine($"Stream Write {data.Length}");
     }
@@ -103,11 +142,24 @@ public sealed class QuicStream {
 
         peerMaxData = maxStreamData;
 
-        semaphore.Release();
+        Console.WriteLine($"READ MAXDATA TO {maxStreamData}");
+
+        if(maxDataSemaphore.CurrentCount < 1)
+            maxDataSemaphore.Release();
     }
 
     internal void PacketAck(uint number) {
-        packets.Remove(number);
+        packets.Remove(number, out PacketInfo packet);
+
+        if(!packet.Data)
+            return;
+
+        Console.WriteLine($"STREAM CONFIRM {number}");
+
+        outputStream.Confirm(packet.Offset, (ulong)packet.Length);
+
+        if(outputStream.Available > 0)
+            availableSemaphore.Release();
     }
 
     internal ValueTask<int> PacketLostAsync(uint number) {
@@ -116,19 +168,24 @@ public sealed class QuicStream {
         if(!info.Data)
             return SendMaxData();
 
-        Span<byte> data = stackalloc byte[info.Length];
-
-        outputStream.Read(data, info.Offset);
-
-        return SendStreamAsync(data, info.Offset, info.Fin);
+        return SendStreamAsync(info.Offset, info.Length, info.Fin);
     }
 
-    ValueTask<int> SendStreamAsync(ReadOnlySpan<byte> data, ulong offset, bool fin) {
+    ValueTask<int> SendStreamAsync(ulong offset, int length, bool fin) {
+        Span<byte> data = stackalloc byte[length];
+
+        outputStream.Read(data, offset);
+
         frameWriter.WriteStream(data, Id, offset, fin);
+
+        Console.WriteLine($"WRITE STREAM TO {offset + (ulong)length}");
+
+        //if(connection.applicationStage.acks.Count > 0)
+        //    frameWriter.WriteAck([..connection.applicationStage.acks]); // TODO remove ToArray
 
         frameWriter.WritePaddingUntil(1200);
 
-        uint number = connection.applicationStage.GetNextPacketNumber(true, Id);
+        uint number = connection.applicationStage.GetNextPacketNumber(Id);
 
         packetWriter.Write(PacketType.OneRtt, number, frameWriter.ToPayload(), null);
 
@@ -140,9 +197,12 @@ public sealed class QuicStream {
     ValueTask<int> SendMaxData() {
         frameWriter.WriteMaxStreamData(Id, inputStream.MaxData);
 
+        //if(connection.applicationStage.acks.Count > 0)
+        //    frameWriter.WriteAck([..connection.applicationStage.acks]); // TODO remove ToArray
+
         frameWriter.WritePaddingUntil(20);
 
-        uint number = connection.applicationStage.GetNextPacketNumber(true, Id);
+        uint number = connection.applicationStage.GetNextPacketNumber(Id);
 
         packetWriter.Write(PacketType.OneRtt, number, frameWriter.ToPayload(), null);
 

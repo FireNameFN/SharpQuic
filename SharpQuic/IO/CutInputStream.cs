@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace SharpQuic.IO;
 
-public sealed class CutInputStream(int bufferLength) {
+public sealed class CutInputStream(int bufferLength) : IDisposable {
     readonly byte[] buffer = new byte[bufferLength];
 
     readonly List<(ulong Min, ulong Max)> regions = [];
@@ -125,5 +125,10 @@ public sealed class CutInputStream(int bufferLength) {
         Offset = offset;
 
         regions.RemoveAll(region => region.Max <= offset);
+    }
+
+    public void Dispose() {
+        readSemaphore.Dispose();
+        semaphore.Dispose();
     }
 }

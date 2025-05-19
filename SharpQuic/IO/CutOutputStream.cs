@@ -10,21 +10,23 @@ public sealed class CutOutputStream(int bufferLength) {
 
     public ulong Offset { get; private set; }
 
-    public ulong Available => Offset + (ulong)bufferOffset;
+    public int Fill { get; private set; }
 
-    int bufferOffset;
+    public ulong MaxData => Offset + (ulong)Fill;
+
+    public int Available => buffer.Length - Fill;
 
     public void Write(ReadOnlySpan<byte> data) {
-        if(bufferOffset + data.Length > buffer.Length)
+        if(Fill + data.Length > buffer.Length)
             throw new OverflowException();
 
-        data.CopyTo(buffer.AsSpan()[bufferOffset..]);
+        data.CopyTo(buffer.AsSpan()[Fill..]);
 
-        bufferOffset += data.Length;
+        Fill += data.Length;
     }
 
     public void Read(Span<byte> destination, ulong offset) {
-        if(offset < Offset || offset + (ulong)destination.Length > Offset + (ulong)bufferOffset)
+        if(offset < Offset || offset + (ulong)destination.Length > Offset + (ulong)Fill)
             throw new IndexOutOfRangeException();
 
         buffer.AsSpan().Slice((int)(offset - Offset), destination.Length).CopyTo(destination);
@@ -72,8 +74,8 @@ public sealed class CutOutputStream(int bufferLength) {
 
         int advance = (int)(Offset - prevOffset);
 
-        buffer.AsSpan()[advance..bufferOffset].CopyTo(buffer);
+        buffer.AsSpan()[advance..Fill].CopyTo(buffer);
 
-        bufferOffset -= advance;
+        Fill -= advance;
     }
 }
