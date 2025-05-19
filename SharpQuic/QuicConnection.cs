@@ -355,7 +355,6 @@ public sealed class QuicConnection : IDisposable {
 
                     break;
                 case HandshakeDoneFrame:
-                    initialStage = null;
                     handshakeStage = null;
 
                     applicationStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
@@ -419,12 +418,13 @@ public sealed class QuicConnection : IDisposable {
                 KeySet = new(tlsClient.CipherSuite)
             };
 
+            initialStage = null;
+
             Protocol = tlsClient.Protocol;
 
             if(endpointType == EndpointType.Client) {
                 peerParameters = tlsClient.PeerParameters;
 
-                initialStage.AckDelayExponent = peerParameters.AckDelayExponent;
                 handshakeStage.AckDelayExponent = peerParameters.AckDelayExponent;
                 applicationStage.AckDelayExponent = peerParameters.AckDelayExponent;
 
@@ -437,12 +437,17 @@ public sealed class QuicConnection : IDisposable {
                 applicationStage.KeySet.Generate(tlsClient.clientApplicationSecret, tlsClient.serverApplicationSecret);
             } else {
                 applicationStage.AckDelayExponent = peerParameters.AckDelayExponent;
-                
-                handshakeStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
 
                 tlsClient.DeriveApplicationSecrets();
 
                 applicationStage.KeySet.Generate(tlsClient.serverApplicationSecret, tlsClient.clientApplicationSecret);
+
+                applicationStage.WriteHandshakeDone(packetWriter);
+
+                handshakeStage = null;
+                
+                applicationStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
+                applicationStage.ProbeTimeoutEnabled = true;
             }
 
             Console.WriteLine("Generated application keys.");

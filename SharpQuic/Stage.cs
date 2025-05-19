@@ -95,10 +95,9 @@ public sealed class Stage {
 
             bool exists = packets.Remove(inFlightPackets[index].Number, out PacketInfo packet);
 
-            if(packet.Acks is null) {
-                if(packet.PacketType == PacketType.OneRtt)
-                    connection.StreamPacketAck(inFlightPackets[index].Number, packet.StreamId);
-            } else if(packet.Acks?.Length > 0)
+            if(packet.Type == PacketInfoType.Stream)
+                connection.StreamPacketAck(inFlightPackets[index].Number, packet.StreamId);
+            else if(packet.Acks?.Length > 0)
                 acks.RemoveWhere(ack => packet.Acks.Contains(ack));
 
             int last = inFlightPackets.Count - 1;
@@ -220,12 +219,13 @@ public sealed class Stage {
 
             Console.WriteLine($"{stage}: Packet lost: {number} that {(exists ? "exists" : "doesn't exists")}");
 
-            if(packet.Acks is null) {
-                if(packet.PacketType == PacketType.OneRtt)
-                    return connection.StreamPacketLostAsync(number, packet.StreamId);
+            if(packet.Type == PacketInfoType.Stream)
+                return connection.StreamPacketLostAsync(number, packet.StreamId);
 
+            if(packet.Type == PacketInfoType.Crypto)
                 WriteCrypto(packetWriter, packet.Offset, packet.Length, packet.Token);
-            }
+            else if(packet.Type == PacketInfoType.HandshakeDone)
+                WriteHandshakeDone(packetWriter);
             
             WriteAck(packetWriter, true);
 
@@ -249,7 +249,7 @@ public sealed class Stage {
     public uint GetNextPacketNumber(ulong streamId) {
         uint number = GetNextPacketNumber(true);
 
-        packets.Add(number, new(null, PacketType.OneRtt, streamId, 0, 0, null));
+        packets.Add(number, new(PacketInfoType.Stream, PacketType.OneRtt, null, streamId, 0, 0, null));
 
         return number;
     }
@@ -280,9 +280,6 @@ public sealed class Stage {
 
         FrameWriter.WriteCrypto(data, offset);
 
-        //if(acks.Count > 0)
-        //    FrameWriter.WriteAck(acks);
-
         if(token is not null)
             FrameWriter.WritePaddingUntil(1200);
         else
@@ -298,7 +295,7 @@ public sealed class Stage {
             _ => PacketType.OneRtt
         };
 
-        packets.Add(number, new(null, packetType, 0, offset, length, token));
+        packets.Add(number, new(PacketInfoType.Crypto, packetType, null, 0, offset, length, token));
 
         packetWriter.Write(packetType, number, FrameWriter.ToPayload(), token);
     }
@@ -321,7 +318,7 @@ public sealed class Stage {
             _ => PacketType.OneRtt
         };
 
-        packets.Add(number, new([..acks], packetType, 0, 0, 0, null));
+        packets.Add(number, new(PacketInfoType.Ack, packetType, [..acks], 0, 0, 0, null));
 
         packetWriter.Write(packetType, number, FrameWriter.ToPayload());
     }
@@ -353,9 +350,27 @@ public sealed class Stage {
             _ => PacketType.OneRtt
         };
 
-        packets.Add(number, new([..acks], packetType, 0, 0, 0, null));
+        packets.Add(number, new(PacketInfoType.Ack, packetType, [..acks], 0, 0, 0, null));
 
-        packetWriter.Write(packetType, number, FrameWriter.ToPayload(), null);
+        packetWriter.Write(packetType, number, FrameWriter.ToPayload());
+    }
+
+    public void WriteHandshakeDone(PacketWriter packetWriter) {
+        FrameWriter.WriteHandshakeDone();
+
+        FrameWriter.WritePaddingUntil(20);
+
+        uint number = GetNextPacketNumber(true);
+
+        PacketType packetType = type switch {
+            StageType.Initial => PacketType.Initial,
+            StageType.Handshake => PacketType.Handshake,
+            _ => PacketType.OneRtt
+        };
+
+        packets.Add(number, new(PacketInfoType.HandshakeDone, packetType, null, 0, 0, 0, null));
+
+        packetWriter.Write(packetType, number, FrameWriter.ToPayload());
     }
 
     public void CalculateProbeTimeout() {
@@ -369,5 +384,12 @@ public sealed class Stage {
 
     readonly record struct InFlightPacket(uint Number, bool AckEliciting, long SendTime);
 
-    readonly record struct PacketInfo(uint[] Acks, PacketType PacketType, ulong StreamId, ulong Offset, int Length, byte[] Token);
+    readonly record struct PacketInfo(PacketInfoType Type, PacketType PacketType, uint[] Acks, ulong StreamId, ulong Offset, int Length, byte[] Token);
+
+    enum PacketInfoType {
+        Ack,
+        Crypto,
+        Stream,
+        HandshakeDone
+    }
 }

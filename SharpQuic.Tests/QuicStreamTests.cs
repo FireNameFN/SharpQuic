@@ -12,7 +12,7 @@ namespace SharpQuic.Tests;
 public class QuicStreamTests {
     [Test, Explicit]
     public async Task QuicStreamTestAsync() {
-        CancellationTokenSource timeoutSource = new(10000);
+        CancellationTokenSource timeoutSource = new(2000);
 
         byte[] data = new byte[8192];
 

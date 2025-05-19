@@ -100,4 +100,8 @@ public sealed class FrameWriter {
 
         Serializer.WriteVariableLength(stream, maxData);
     }
+
+    public void WriteHandshakeDone() {
+        Serializer.WriteVariableLength(stream, (ulong)FrameType.HandshakeDone);
+    }
 }
