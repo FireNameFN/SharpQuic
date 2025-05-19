@@ -11,6 +11,8 @@ public readonly struct QuicConfiguration() {
 
     public X509Certificate2[] CertificateChain { get; init; }
 
+    public X509ChainPolicy ChainPolicy { get; init; }
+
     public QuicTransportParameters Parameters { get; init; } = new();
 
     public CancellationToken CancellationToken { get; init; }

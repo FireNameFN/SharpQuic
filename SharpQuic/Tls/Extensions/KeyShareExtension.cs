@@ -40,7 +40,7 @@ public static class KeyShareExtension {
     public static KeyShareEntry[] DecodeClient(Stream stream) {
         Serializer.ReadUInt16(stream);
         
-        int length = Serializer.ReadUInt16(stream) / 34;
+        int length = Serializer.ReadUInt16(stream) / 36;
 
         KeyShareEntry[] entries = new KeyShareEntry[length];
 

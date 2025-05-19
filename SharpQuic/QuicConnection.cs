@@ -49,6 +49,8 @@ public sealed class QuicConnection {
 
     readonly double debugOutputPacketLoss;
 
+    public string Protocol { get; private set; }
+
     State state;
 
     ulong nextBidirectionalStreamId;
@@ -73,7 +75,7 @@ public sealed class QuicConnection {
             KeySet = new(CipherSuite.Aes128GcmSHA256)
         };
 
-        tlsClient = new(configuration.Parameters, configuration.Protocols, configuration.CertificateChain);
+        tlsClient = new(configuration.Parameters, configuration.Protocols, configuration.CertificateChain, configuration.ChainPolicy);
 
         timer = new(this);
 
@@ -177,41 +179,20 @@ public sealed class QuicConnection {
         return client.SendAsync(datagram);
     }
 
-    ValueTask<int> FlushAsync() {
-        return SendAsync(packetWriter);
-    }
-
-    internal async Task SendCrypto(ReadOnlyMemory<byte> data, FrameWriter frameWriter) {
-        int position = 0;
-
-        while(position < data.Length) {
-            int length = 1200 - frameWriter.Length;
-
-            if(position + length > data.Length)
-                length = data.Length - position;
-
-            frameWriter.WriteCrypto(data.Slice(position, length).Span, (ulong)position);
-
-            position += length;
-
-            await FlushAsync();
-        }
-    }
-
     internal ValueTask<int> StreamPacketLostAsync(uint number, ulong streamId) {
         return streams[streamId].PacketLostAsync(number);
     }
 
     async Task RunnerAsync() {
         try {
-            Console.WriteLine("Test");
+            long time = Stopwatch.GetTimestamp();
 
             while(true) {
                 Console.WriteLine("Receiving");
 
                 UdpReceiveResult result = await client.ReceiveAsync(cancellationToken);
 
-                Console.WriteLine($"Time: {(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMilliseconds}");
+                Console.WriteLine($"Time: {(Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency}");
 
                 if(Random.Shared.NextDouble() < debugInputPacketLoss) {
                     Console.WriteLine($"Losed datagram: {result.Buffer.Length}");
@@ -255,7 +236,7 @@ public sealed class QuicConnection {
 
                     await HandleHandshakeAsync();
 
-                    await FlushAsync();
+                    await SendAsync(packetWriter);
                 }
             }
         } catch(Exception e) {
@@ -397,7 +378,7 @@ public sealed class QuicConnection {
                 initialStage.AckDelayExponent = peerParameters.AckDelayExponent;
                 handshakeStage.AckDelayExponent = peerParameters.AckDelayExponent;
 
-                initialStage.WriteCrypto(packetWriter, tlsClient.SendServerHello());
+                await initialStage.WriteCryptoAsync(packetWriter, tlsClient.SendServerHello());
                 
                 tlsClient.DeriveHandshakeSecrets();
 
@@ -405,11 +386,9 @@ public sealed class QuicConnection {
 
                 Console.WriteLine("Generated handshake keys.");
 
-                handshakeStage.WriteCrypto(packetWriter, tlsClient.SendServerHandshake());
+                await handshakeStage.WriteCryptoAsync(packetWriter, tlsClient.SendServerHandshake());
 
                 Console.WriteLine("Sending server handshake.");
-
-                await FlushAsync();
             } else {
                 tlsClient.DeriveHandshakeSecrets();
 
@@ -426,6 +405,8 @@ public sealed class QuicConnection {
                 KeySet = new(tlsClient.CipherSuite)
             };
 
+            Protocol = tlsClient.Protocol;
+
             if(endpointType == EndpointType.Client) {
                 peerParameters = tlsClient.PeerParameters;
 
@@ -433,9 +414,7 @@ public sealed class QuicConnection {
                 handshakeStage.AckDelayExponent = peerParameters.AckDelayExponent;
                 applicationStage.AckDelayExponent = peerParameters.AckDelayExponent;
 
-                handshakeStage.WriteCrypto(packetWriter, tlsClient.SendClientFinished());
-
-                await FlushAsync();
+                await handshakeStage.WriteCryptoAsync(packetWriter, tlsClient.SendClientFinished());
 
                 tlsClient.DeriveApplicationSecrets();
 
@@ -456,10 +435,8 @@ public sealed class QuicConnection {
         }
     }
 
-    ValueTask<int> SendClientHelloAsync(byte[] token = null) {
-        initialStage.WriteCrypto(packetWriter, tlsClient.SendClientHello(), token ?? []);
-
-        return FlushAsync();
+    Task SendClientHelloAsync(byte[] token = null) {
+        return initialStage.WriteCryptoAsync(packetWriter, tlsClient.SendClientHello(), token ?? []);
     }
 
     enum State {

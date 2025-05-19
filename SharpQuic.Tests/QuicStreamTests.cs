@@ -27,6 +27,9 @@ public class QuicStreamTests {
                 client = await QuicConnection.ConnectAsync(new() {
                     Point = IPEndPoint.Parse("127.0.0.1:50000"),
                     Protocols = ["test"],
+                    ChainPolicy = new() {
+                        VerificationFlags = X509VerificationFlags.AllFlags
+                    },
                     CancellationToken = timeoutSource.Token
                 });
 

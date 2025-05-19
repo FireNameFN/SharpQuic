@@ -265,10 +265,23 @@ public sealed class Stage {
         return number;
     }
 
-    public void WriteCrypto(PacketWriter packetWriter, byte[] data, byte[] token = null) {
+    public async Task WriteCryptoAsync(PacketWriter packetWriter, byte[] data, byte[] token = null) {
+        ulong position = CryptoOutputStream.Available;
+
         CryptoOutputStream.Write(data);
 
-        WriteCrypto(packetWriter, 0, data.Length, token);
+        ulong available = CryptoOutputStream.Available;
+
+        while(position < available) {
+            int length = Math.Min((int)(available - position), 1200 - packetWriter.Length);
+
+            if(length > 0) {
+                WriteCrypto(packetWriter, position, length, token);
+
+                position += (ulong)length;
+            } else
+                await connection.SendAsync(packetWriter);
+        }
     }
 
     void WriteCrypto(PacketWriter packetWriter, ulong offset, int length, byte[] token) {

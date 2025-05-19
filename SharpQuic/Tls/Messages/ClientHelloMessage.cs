@@ -95,6 +95,10 @@ public sealed class ClientHelloMessage : IMessage {
                     KeyShare = KeyShareExtension.DecodeClient(stream);
                     
                     break;
+                case ExtensionType.ApplicationLayerProtocolNegotiation:
+                    Protocols = AlpnExtension.Decode(stream);
+
+                    break;
                 case ExtensionType.QuicTransportParameters:
                     Parameters = QuicTransportParametersExtension.Decode(stream);
 

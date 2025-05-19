@@ -10,6 +10,8 @@ public sealed class CutOutputStream(int bufferLength) {
 
     public ulong Offset { get; private set; }
 
+    public ulong Available => Offset + (ulong)bufferOffset;
+
     int bufferOffset;
 
     public void Write(ReadOnlySpan<byte> data) {

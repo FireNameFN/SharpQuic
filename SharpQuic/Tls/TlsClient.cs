@@ -21,11 +21,15 @@ public sealed class TlsClient {
 
     public QuicTransportParameters PeerParameters { get; private set; }
 
+    public string Protocol { get; private set; }
+
     readonly QuicTransportParameters parameters;
 
     string[] protocols;
 
     X509Certificate2[] certificateChain;
+
+    X509ChainPolicy chainPolicy;
 
     X509Certificate2[] remoteCertificateChain;
 
@@ -46,10 +50,11 @@ public sealed class TlsClient {
 
     internal byte[] serverApplicationSecret;
 
-    public TlsClient(QuicTransportParameters parameters, string[] protocols, X509Certificate2[] certificateChain = null) {
+    public TlsClient(QuicTransportParameters parameters, string[] protocols, X509Certificate2[] certificateChain = null, X509ChainPolicy chainPolicy = null) {
         this.parameters = parameters;
         this.protocols = protocols;
         this.certificateChain = certificateChain ?? [];
+        this.chainPolicy = chainPolicy ?? new();
 
         X25519KeyPairGenerator generator = new();
 
@@ -163,7 +168,7 @@ public sealed class TlsClient {
         MemoryStream stream = new();
 
         EncryptedExtensionsMessage encryptedExtensionsMessage = new() {
-            Protocol = protocols[0],
+            Protocol = Protocol,
             Parameters = parameters
         };
 
@@ -273,9 +278,7 @@ public sealed class TlsClient {
                 Console.WriteLine($"Received Finished");
                 break;
             default:
-                //messageStream.Position += length;
-                throw new NotImplementedException();
-                //break;
+                throw new QuicException();
         }
 
         if(state == TlsState.WaitClientFinished)
@@ -312,6 +315,11 @@ public sealed class TlsClient {
 
         PeerParameters = message.Parameters;
 
+        Protocol = protocols.Intersect(message.Protocols).FirstOrDefault();
+
+        if(Protocol is null)
+            throw new QuicException();
+
         State = TlsState.WaitClientFinished;
     }
 
@@ -330,6 +338,8 @@ public sealed class TlsClient {
         if(State != TlsState.WaitEncryptedExtensions)
             throw new QuicException();
 
+        Protocol = message.Protocol;
+
         PeerParameters = message.Parameters;
 
         State = TlsState.WaitCertificate;
@@ -340,6 +350,15 @@ public sealed class TlsClient {
             throw new QuicException();
 
         remoteCertificateChain = message.CertificateChain;
+
+        chainPolicy.ExtraStore.AddRange(message.CertificateChain);
+
+        using X509Chain chain = new() {
+            ChainPolicy = chainPolicy
+        };
+
+        if(!chain.Build(message.CertificateChain[0]))
+            throw new QuicException();
 
         State = TlsState.WaitCertificateVerify;
     }

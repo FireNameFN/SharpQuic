@@ -2,6 +2,7 @@ using System;
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
 
@@ -11,15 +12,31 @@ namespace SharpQuic.Tests;
 public class QuicConnectionTests {
     [Test, Explicit]
     public async Task QuicConnectionTestAsync() {
+        CancellationTokenSource timeoutSource = new(5000);
+
         QuicConnection client = null;
 
         TaskCompletionSource source = new();
+
+        CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+
+        //CertificateRequest request = new("cn=Test CA", ECDsa.Create(), HashAlgorithmName.SHA256);
+
+        X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
 
         _ = Task.Run(async () => {
             try {
                 client = await QuicConnection.ConnectAsync(new() {
                     Point = IPEndPoint.Parse("127.0.0.1:50000"),
-                    Protocols = ["test"]
+                    Protocols = ["test"],
+                    ChainPolicy = new() {
+                        TrustMode = X509ChainTrustMode.CustomRootTrust,
+                        RevocationMode = X509RevocationMode.NoCheck,
+                        CustomTrustStore = {
+                            certificate
+                        }
+                    },
+                    CancellationToken = timeoutSource.Token
                 });
 
                 source.SetResult();
@@ -28,16 +45,11 @@ public class QuicConnectionTests {
             }
         });
 
-        CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-
-        //CertificateRequest request = new("cn=Test CA", ECDsa.Create(), HashAlgorithmName.SHA256);
-
-        X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
-
         QuicConnection server = await QuicConnection.ListenAsync(new() {
             Point = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
-            CertificateChain = [certificate]
+            CertificateChain = [certificate],
+            CancellationToken = timeoutSource.Token
         });
 
         await source.Task;
