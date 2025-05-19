@@ -33,7 +33,7 @@ public sealed class QuicConnection {
 
     internal Stage applicationStage;
 
-    internal readonly PacketWriter packetWriter;
+    readonly PacketWriter packetWriter;
 
     internal readonly EndpointType endpointType;
 
@@ -177,11 +177,7 @@ public sealed class QuicConnection {
         return client.SendAsync(datagram);
     }
 
-    internal ValueTask<int> FlushAsync(byte[] token = null) {
-        //initialStage?.Write(PacketType.Initial, token);
-        //handshakeStage?.Write(PacketType.Handshake);
-        //applicationStage?.Write(PacketType.OneRtt);
-
+    ValueTask<int> FlushAsync() {
         return SendAsync(packetWriter);
     }
 
@@ -319,9 +315,6 @@ public sealed class QuicConnection {
 
                     break;
                 case CryptoFrame cryptoFrame:
-                    if(handshakeStage is not null && packet is InitialPacket || applicationStage is not null && packet is HandshakePacket)
-                        break;
-
                     CutInputStream cryptoStream = packet.PacketType switch {
                         PacketType.Initial => initialStage.CryptoInputStream,
                         PacketType.Handshake => handshakeStage.CryptoInputStream,
@@ -370,6 +363,7 @@ public sealed class QuicConnection {
                     initialStage = null;
                     handshakeStage = null;
 
+                    applicationStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
                     applicationStage.ProbeTimeoutEnabled = true;
 
                     break;
@@ -403,12 +397,7 @@ public sealed class QuicConnection {
                 initialStage.AckDelayExponent = peerParameters.AckDelayExponent;
                 handshakeStage.AckDelayExponent = peerParameters.AckDelayExponent;
 
-                initialStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
-                handshakeStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
-
-                //initialStage.FrameWriter.WriteCrypto(tlsClient.SendServerHello(), 0);
-
-                initialStage.WriteCrypto(tlsClient.SendServerHello());
+                initialStage.WriteCrypto(packetWriter, tlsClient.SendServerHello());
                 
                 tlsClient.DeriveHandshakeSecrets();
 
@@ -416,9 +405,7 @@ public sealed class QuicConnection {
 
                 Console.WriteLine("Generated handshake keys.");
 
-                //handshakeStage.FrameWriter.WriteCrypto(tlsClient.SendServerHandshake(), 0);
-
-                handshakeStage.WriteCrypto(tlsClient.SendServerHandshake());
+                handshakeStage.WriteCrypto(packetWriter, tlsClient.SendServerHandshake());
 
                 Console.WriteLine("Sending server handshake.");
 
@@ -446,13 +433,7 @@ public sealed class QuicConnection {
                 handshakeStage.AckDelayExponent = peerParameters.AckDelayExponent;
                 applicationStage.AckDelayExponent = peerParameters.AckDelayExponent;
 
-                initialStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
-                handshakeStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
-                handshakeStage.MaxAckDelay = Math.Max(parameters.MaxAckDelay, peerParameters.MaxAckDelay);
-
-                //handshakeStage.FrameWriter.WriteCrypto(tlsClient.SendClientFinished(), 0);
-
-                handshakeStage.WriteCrypto(tlsClient.SendClientFinished());
+                handshakeStage.WriteCrypto(packetWriter, tlsClient.SendClientFinished());
 
                 await FlushAsync();
 
@@ -476,13 +457,9 @@ public sealed class QuicConnection {
     }
 
     ValueTask<int> SendClientHelloAsync(byte[] token = null) {
-        //initialStage.FrameWriter.WriteCrypto(tlsClient.SendClientHello(), 0);
+        initialStage.WriteCrypto(packetWriter, tlsClient.SendClientHello(), token ?? []);
 
-        initialStage.WriteCrypto(tlsClient.SendClientHello(), true, token);
-
-        //initialStage.FrameWriter.WritePaddingUntil(1200);
-
-        return FlushAsync(token);
+        return FlushAsync();
     }
 
     enum State {

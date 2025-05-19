@@ -7,8 +7,11 @@ namespace SharpQuic;
 public sealed class ProbeTimeoutTimer {
     readonly QuicConnection connection;
 
+    readonly PacketWriter packetWriter;
+
     internal ProbeTimeoutTimer(QuicConnection connection) {
         this.connection = connection;
+        packetWriter = new(connection);
     }
 
     public Task StartAsync() {
@@ -29,13 +32,15 @@ public sealed class ProbeTimeoutTimer {
                     Console.WriteLine("Probe");
 
                     if(connection.initialStage?.ProbeTimeout <= min)
-                        await connection.initialStage.SendProbe();
+                        connection.initialStage.WriteProbe(packetWriter);
 
                     if(connection.handshakeStage?.ProbeTimeout <= min)
-                        await connection.handshakeStage.SendProbe();
+                        connection.handshakeStage.WriteProbe(packetWriter);
 
                     if(connection.applicationStage?.ProbeTimeout <= min)
-                        await connection.applicationStage.SendProbe();
+                        connection.applicationStage.WriteProbe(packetWriter);
+
+                    await connection.SendAsync(packetWriter);
                 } else {
                     int time = (int)(next - Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency);
 

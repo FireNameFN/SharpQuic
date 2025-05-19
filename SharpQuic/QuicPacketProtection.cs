@@ -62,13 +62,16 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         Span<byte> tag = stackalloc byte[16];
 
-        CipherSuite cipherSuite = packet.PacketType == PacketType.Initial ? CipherSuite.Aes128GcmSHA256 : CipherSuite;
-
-        switch(cipherSuite) {
+        switch(CipherSuite) {
             case CipherSuite.Aes128GcmSHA256:
             case CipherSuite.Aes256GcmSHA384:
                 using(AesGcm aesGcm = new(keySet.SourceKey, 16))
                     aesGcm.Encrypt(nonce, packet.Payload, payload, tag, packet.EncodeUnprotectedHeader());
+
+                break;
+            case CipherSuite.ChaCha20Poly1305Sha256:
+                using(ChaCha20Poly1305 chacha = new(keySet.SourceKey))
+                    chacha.Encrypt(nonce, packet.Payload, payload, tag, packet.EncodeUnprotectedHeader());
 
                 break;
         }
@@ -79,7 +82,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         Span<byte> mask = stackalloc byte[16];
 
-        GetMask(keySet.SourceHp, sample, packet.PacketType, mask);
+        GetMask(CipherSuite, keySet.SourceHp, sample, packet.PacketType, mask);
 
         byte protectedFirstByte = (byte)(packet.GetUnprotectedFirstByte() ^ mask[0]);
 
@@ -208,7 +211,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         Span<byte> mask = stackalloc byte[16];
 
-        GetMask(keySet.DestinationHp, sample, type, mask);
+        GetMask(CipherSuite, keySet.DestinationHp, sample, type, mask);
 
         protectedFirstByte ^= mask[0];
 
@@ -242,8 +245,11 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
                     aesGcm.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
 
                 break;
-            default:
-                throw new NotImplementedException();
+            case CipherSuite.ChaCha20Poly1305Sha256:
+                using(ChaCha20Poly1305 chacha = new(keySet.SourceKey))
+                    chacha.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
+
+                break;
         }
 
         return packet;
@@ -258,12 +264,18 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
             nonce[i] = (byte)(iv[i] ^ packetNumberSpan[i]);
     }
 
-    static void GetMask(byte[] hp, ReadOnlySpan<byte> sample, PacketType type, Span<byte> mask) {
-        using Aes aes = Aes.Create();
+    static void GetMask(CipherSuite cipherSuite, byte[] hp, ReadOnlySpan<byte> sample, PacketType type, Span<byte> mask) {
+        if(cipherSuite == CipherSuite.ChaCha20Poly1305Sha256) {
+            using ChaCha20Poly1305 chacha = new(hp);
 
-        aes.Key = hp;
+            chacha.Encrypt(sample[4..], [0, 0, 0, 0, 0], mask, stackalloc byte[16], sample[..3]);
+        } else {
+            using Aes aes = Aes.Create();
 
-        aes.EncryptEcb(sample, mask, PaddingMode.None);
+            aes.Key = hp;
+
+            aes.EncryptEcb(sample, mask, PaddingMode.None);
+        }
 
         mask[0] &= type.HasFlag(PacketType.LongHeader) ? (byte)0b1111 : (byte)0b11111;
     }

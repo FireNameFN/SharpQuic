@@ -130,12 +130,12 @@ public sealed class TlsClient {
 
         ((ECPublicKeyParameters)keyPair1.Public).Q.XCoord.GetEncoded().AsSpan().CopyTo(k);
 
-        ((ECPublicKeyParameters)keyPair1.Public).Q.XCoord.GetEncoded().AsSpan().CopyTo(k1);
+        ((ECPublicKeyParameters)keyPair1.Public).Q.XCoord.GetEncoded().AsSpan().CopyTo(k1); // TODO Maybe YCoord?
 
         byte[] key1 = [4, ..k, ..k1];
 
         ClientHelloMessage message = new() {
-            CipherSuites = [CipherSuite.Aes256GcmSHA384],
+            CipherSuites = ChaCha20Poly1305.IsSupported ? [CipherSuite.ChaCha20Poly1305Sha256, CipherSuite.Aes256GcmSHA384, CipherSuite.Aes128GcmSHA256] : [CipherSuite.Aes256GcmSHA384, CipherSuite.Aes128GcmSHA256],
             KeyShare = [new(NamedGroup.X25519, key), new(NamedGroup.SecP256r1, key1)],
             Protocols = protocols,
             Parameters = parameters

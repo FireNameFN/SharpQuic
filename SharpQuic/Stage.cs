@@ -184,24 +184,23 @@ public sealed class Stage {
 
         int threshold = Math.Max(TimeThresholdNumerator * Math.Max(smoothedRtt, latestRtt) / TimeThresholdDenominator, Granularity);
 
-        foreach(InFlightPacket packet in inFlightPackets.ToArray()) { // TODO Remove ToArray
-            if(largestAcknowledged >= packet.Number + PacketThreshold) {
-                await PacketLostAsync(packet.Number);
+        int count = inFlightPackets.Count;
 
-                inFlightPackets.Remove(packet);
+        for(int i = 0; i < count; i++) {
+            InFlightPacket packet = inFlightPackets[i];
 
+            if(largestAcknowledged < packet.Number + PacketThreshold)
                 continue;
-            }
 
-            Console.WriteLine($"Checking {packet.Number}. Time: {(time - packet.SendTime) * 1000 / Stopwatch.Frequency}. Threshold: {threshold}");
-
-            if((time - packet.SendTime) * 1000 / Stopwatch.Frequency >= threshold) {
-                await PacketLostAsync(packet.Number);
-                
-                inFlightPackets.Remove(packet);
-
+            if((time - packet.SendTime) * 1000 / Stopwatch.Frequency < threshold)
                 continue;
-            }
+
+            await PacketLostAsync(packet.Number);
+
+            inFlightPackets.RemoveAt(i);
+
+            i--;
+            count--;
         }
 
         ValueTask<int> PacketLostAsync(uint number) {
@@ -222,7 +221,9 @@ public sealed class Stage {
                 if(packet.PacketType == PacketType.OneRtt)
                     return connection.StreamPacketLostAsync(number, packet.StreamId);
 
-                return SendCrypto(packet.Offset, packet.Length, packet.Token);
+                WriteCrypto(packetWriter, packet.Offset, packet.Length, packet.Token);
+
+                return connection.SendAsync(packetWriter);
             }
 
             if(acks.Count < 1)
@@ -264,49 +265,13 @@ public sealed class Stage {
         return number;
     }
 
-    public void Write(PacketType type, byte[] token = null) {
-        if(!FrameWriter.HasPayload && !ackEliciting)
-            return;
-
-        uint number = GetNextPacketNumber(FrameWriter.AckEliciting);
-
-        packets.Add(number, new([..acks], type, 0, 0, 0, null));
-
-        if(acks.Count > 0) {
-            FrameWriter.WriteAck(acks);
-            
-            ackEliciting = false;
-        }
-
-        FrameWriter.WritePaddingUntil(20);
-
-        connection.packetWriter.Write(type, number, FrameWriter.ToPayload(), token);
-    }
-
-    public void WriteCrypto(byte[] data, bool clientHello = false, byte[] token = null) {
+    public void WriteCrypto(PacketWriter packetWriter, byte[] data, byte[] token = null) {
         CryptoOutputStream.Write(data);
 
-        uint number = GetNextPacketNumber(FrameWriter.AckEliciting);
-
-        Console.WriteLine($"Crypto {type}");
-
-        PacketType packetType = type switch {
-            StageType.Initial => PacketType.Initial,
-            StageType.Handshake => PacketType.Handshake,
-            _ => PacketType.OneRtt
-        };
-
-        packets.Add(number, new(null, packetType, 0, 0, data.Length, clientHello ? token ?? [] : null));
-
-        FrameWriter.WriteCrypto(data, 0);
-
-        if(clientHello)
-            FrameWriter.WritePaddingUntil(1200);
-
-        connection.packetWriter.Write(packetType, number, FrameWriter.ToPayload(), token);
+        WriteCrypto(packetWriter, 0, data.Length, token);
     }
 
-    public ValueTask<int> SendCrypto(ulong offset, int length, byte[] token) {
+    void WriteCrypto(PacketWriter packetWriter, ulong offset, int length, byte[] token) {
         uint number = GetNextPacketNumber(FrameWriter.AckEliciting);
 
         Console.WriteLine($"Crypto {type}");
@@ -329,13 +294,14 @@ public sealed class Stage {
             FrameWriter.WritePaddingUntil(1200);
 
         packetWriter.Write(packetType, number, FrameWriter.ToPayload(), token);
-
-        return connection.SendAsync(packetWriter);
     }
 
-    public ValueTask<int> SendProbe() {
-        if(type == StageType.Initial && latestRtt < 0)
-            return SendCrypto(packets[nextPacketNumber].Offset, packets[nextPacketNumber].Length, packets[nextPacketNumber].Token);
+    public void WriteProbe(PacketWriter packetWriter) {
+        if(type == StageType.Initial && latestRtt < 0) {
+            WriteCrypto(packetWriter, packets[nextPacketNumber].Offset, packets[nextPacketNumber].Length, packets[nextPacketNumber].Token);
+
+            return;
+        }
 
         uint number = GetNextPacketNumber(FrameWriter.AckEliciting);
 
@@ -359,8 +325,6 @@ public sealed class Stage {
         FrameWriter.WritePaddingUntil(20);
 
         packetWriter.Write(packetType, number, FrameWriter.ToPayload(), null);
-
-        return connection.SendAsync(packetWriter);
     }
 
     public void CalculateProbeTimeout() {

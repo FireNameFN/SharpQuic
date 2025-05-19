@@ -15,7 +15,7 @@ public sealed class PacketWriter {
         this.connection = connection;
     }
 
-    public void Write(PacketType type, uint packetNumber, byte[] payload, byte[] token) {
+    public void Write(PacketType type, uint packetNumber, byte[] payload, byte[] token = null) {
         Packet packet = type switch {
             PacketType.Initial => new InitialPacket() { Token = token ?? [] },
             PacketType.Handshake => new HandshakePacket(),
@@ -31,6 +31,12 @@ public sealed class PacketWriter {
         packet.Payload = payload;
 
         stream.Write(connection.protection.Protect(packet, connection.initialStage?.KeySet, connection.handshakeStage?.KeySet, connection.applicationStage?.KeySet));
+    }
+
+    public void Write(PacketWriter packetWriter) {
+        packetWriter.stream.Position = 0;
+
+        packetWriter.stream.CopyTo(stream);
     }
 
     public Memory<byte> ToDatagram() {
