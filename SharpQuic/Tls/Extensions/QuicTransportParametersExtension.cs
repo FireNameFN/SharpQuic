@@ -60,6 +60,36 @@ public static class QuicTransportParametersExtension {
             ulong id = Serializer.ReadVariableLength(stream).Value;
 
             switch(id) {
+                case 0x04:
+                    Serializer.ReadVariableLength(stream);
+                    parameters.InitialMaxData = Serializer.ReadVariableLength(stream).Value;
+
+                    break;
+                case 0x05:
+                    Serializer.ReadVariableLength(stream);
+                    parameters.InitialMaxStreamDataBidiLocal = Serializer.ReadVariableLength(stream).Value;
+
+                    break;
+                case 0x06:
+                    Serializer.ReadVariableLength(stream);
+                    parameters.InitialMaxStreamDataBidiRemote = Serializer.ReadVariableLength(stream).Value;
+
+                    break;
+                case 0x07:
+                    Serializer.ReadVariableLength(stream);
+                    parameters.InitialMaxStreamDataUni = Serializer.ReadVariableLength(stream).Value;
+
+                    break;
+                case 0x08:
+                    Serializer.ReadVariableLength(stream);
+                    parameters.InitialMaxStreamsBidi = Serializer.ReadVariableLength(stream).Value;
+
+                    break;
+                case 0x09:
+                    Serializer.ReadVariableLength(stream);
+                    parameters.InitialMaxStreamsUni = Serializer.ReadVariableLength(stream).Value;
+
+                    break;
                 case 0x0a:
                     Serializer.ReadVariableLength(stream);
                     parameters.AckDelayExponent = (int)Serializer.ReadVariableLength(stream).Value;

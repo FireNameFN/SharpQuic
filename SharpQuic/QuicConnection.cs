@@ -127,7 +127,7 @@ public sealed class QuicConnection : IDisposable {
     public QuicStream OpenBidirectionalStream() {
         ulong id = nextBidirectionalStreamId++;
 
-        QuicStream stream = new(this, id << 2 | (endpointType == EndpointType.Client ? 0u : 1u));
+        QuicStream stream = new(this, id << 2 | (endpointType == EndpointType.Client ? 0u : 1u), peerParameters.InitialMaxStreamDataBidiLocal);
 
         streams.Add(stream.Id, stream);
 
@@ -137,7 +137,7 @@ public sealed class QuicConnection : IDisposable {
     public QuicStream OpenUnidirectionalStream() {
         ulong id = nextUnidirectionalStreamId++;
 
-        QuicStream stream = new(this, id << 2 | 0b10 | (endpointType == EndpointType.Client ? 0u : 1u));
+        QuicStream stream = new(this, id << 2 | 0b10 | (endpointType == EndpointType.Client ? 0u : 1u), peerParameters.InitialMaxStreamDataUni);
 
         streams.Add(stream.Id, stream);
 
@@ -147,7 +147,7 @@ public sealed class QuicConnection : IDisposable {
     public QuicStream ReceiveBidirectionalStream() {
         ulong id = nextPeerBidirectionalStreamId++;
 
-        QuicStream stream = new(this, id << 2 | (endpointType == EndpointType.Server ? 0u : 1u));
+        QuicStream stream = new(this, id << 2 | (endpointType == EndpointType.Server ? 0u : 1u), peerParameters.InitialMaxStreamDataBidiRemote);
 
         streams.Add(stream.Id, stream);
 
@@ -157,11 +157,17 @@ public sealed class QuicConnection : IDisposable {
     public QuicStream ReceiveUnidirectionalStream() {
         ulong id = nextPeerUnidirectionalStreamId++;
 
-        QuicStream stream = new(this, id << 2 | 0b10 | (endpointType == EndpointType.Server ? 0u : 1u));
+        QuicStream stream = new(this, id << 2 | 0b10 | (endpointType == EndpointType.Server ? 0u : 1u), 0);
 
         streams.Add(stream.Id, stream);
 
         return stream;
+    }
+
+    internal void StreamClosed(ulong id) {
+        streams.Remove(id, out QuicStream stream);
+
+        stream.Dispose();
     }
 
     internal ValueTask<int> SendAsync(PacketWriter packetWriter) {
@@ -332,7 +338,7 @@ public sealed class QuicConnection : IDisposable {
                     break;
                 case StreamFrame streamFrame:
                     if(!streams.TryGetValue(streamFrame.Id, out QuicStream stream)) {
-                        stream = new(this, streamFrame.Id);
+                        stream = new(this, streamFrame.Id, (streamFrame.Id & 0b10) == 0 ? peerParameters.InitialMaxStreamDataBidiRemote : 0);
 
                         streams[streamFrame.Id] = stream;
                     }
@@ -342,7 +348,7 @@ public sealed class QuicConnection : IDisposable {
                     break;
                 case MaxStreamDataFrame maxStreamDataFrame:
                     if(!streams.TryGetValue(maxStreamDataFrame.Id, out stream)) {
-                        stream = new(this, maxStreamDataFrame.Id);
+                        stream = new(this, maxStreamDataFrame.Id, (maxStreamDataFrame.Id & 0b10) == 0 ? peerParameters.InitialMaxStreamDataBidiRemote : 0);
 
                         streams[maxStreamDataFrame.Id] = stream;
                     }
@@ -464,6 +470,9 @@ public sealed class QuicConnection : IDisposable {
 
     public void Dispose() {
         client.Dispose();
+
+        foreach(QuicStream stream in streams.Values)
+            stream.Dispose();
     }
 
     enum State {

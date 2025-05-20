@@ -59,8 +59,8 @@ public static class Serializer {
             bits = length switch {
                 1 => 0b00 << 6,
                 2 => 0b01 << 6,
-                3 => 0b10 << 6,
-                4 => 0b11 << 6,
+                4 => 0b10 << 6,
+                8 => 0b11 << 6,
                 _ => throw new ArgumentOutOfRangeException(nameof(length))
             };
 

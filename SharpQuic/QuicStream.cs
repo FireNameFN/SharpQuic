@@ -12,9 +12,9 @@ public sealed class QuicStream {
 
     readonly QuicConnection connection;
 
-    readonly CutInputStream inputStream = new(1024); // TODO Dispose
+    readonly CutInputStream inputStream = new(1 << 20);
 
-    readonly CutOutputStream outputStream = new(512);
+    readonly CutOutputStream outputStream = new(1 << 20);
 
     readonly Dictionary<uint, PacketInfo> packets = [];
 
@@ -22,18 +22,21 @@ public sealed class QuicStream {
 
     readonly FrameWriter frameWriter = new();
 
+    readonly SemaphoreSlim maxDataSemaphore = new(0, 1);
+
+    readonly SemaphoreSlim availableSemaphore = new(0, 1);
+
     ulong offset;
 
     ulong peerMaxData = 1024;
 
-    readonly SemaphoreSlim maxDataSemaphore = new(0, 1); // TODO Dispose
-
-    readonly SemaphoreSlim availableSemaphore = new(0, 1); // TODO Dispose
+    bool closed;
 
     bool peerClosed;
 
-    internal QuicStream(QuicConnection connection, ulong id) {
+    internal QuicStream(QuicConnection connection, ulong id, ulong peerMaxData) {
         this.connection = connection;
+        this.peerMaxData = peerMaxData;
         Id = id;
 
         packetWriter = new(connection);
@@ -47,6 +50,9 @@ public sealed class QuicStream {
     }
 
     public async Task WriteAsync(ReadOnlyMemory<byte> data, bool close = false) {
+        if(closed)
+            throw new QuicException();
+
         int position = 0;
 
         ulong offset = this.offset;
@@ -77,17 +83,21 @@ public sealed class QuicStream {
                 if(peerMaxData <= offset)
                     await maxDataSemaphore.WaitAsync(connection.cancellationToken);
                 else
-                    throw new UnreachableException("Test?");
+                    throw new UnreachableException("Test?"); // TODO remove
             }
         }
 
         this.offset = maxOffset;
 
         Console.WriteLine($"Stream Write {data.Length}");
+
+        closed = close;
     }
 
-    public Task ReadAsync(Memory<byte> memory) {
-        return inputStream.ReadAsync(memory, connection.cancellationToken);
+    public async Task ReadAsync(Memory<byte> memory) {
+        await inputStream.ReadAsync(memory, connection.cancellationToken);
+
+        CheckClosed();
     }
 
     internal void Put(ReadOnlySpan<byte> data, ulong offset, bool close) {
@@ -120,6 +130,8 @@ public sealed class QuicStream {
 
         if(outputStream.Available > 0)
             availableSemaphore.Release();
+
+        CheckClosed();
     }
 
     internal ValueTask<int> PacketLostAsync(uint number) {
@@ -163,6 +175,18 @@ public sealed class QuicStream {
         packets.Add(number, new(false, 0, 0, false));
 
         return connection.SendAsync(packetWriter);
+    }
+
+    void CheckClosed() {
+        if(closed && peerClosed && inputStream.Offset >= offset && outputStream.Offset >= offset)
+            connection.StreamClosed(Id);
+    }
+
+    internal void Dispose() {
+        inputStream.Dispose();
+
+        maxDataSemaphore.Dispose();
+        availableSemaphore.Dispose();
     }
 
     readonly record struct PacketInfo(bool Data, ulong Offset, int Length, bool Fin);
