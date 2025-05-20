@@ -5,6 +5,7 @@ using System.IO;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using SharpQuic.Frames;
 using SharpQuic.IO;
@@ -47,6 +48,8 @@ public sealed class QuicConnection : IDisposable {
 
     internal readonly CancellationTokenSource connectionSource;
 
+    readonly Channel<QuicStream> channel = Channel.CreateUnbounded<QuicStream>(new() { SingleReader = true, SingleWriter = true });
+
     readonly double debugInputPacketLoss;
 
     readonly double debugOutputPacketLoss;
@@ -58,10 +61,6 @@ public sealed class QuicConnection : IDisposable {
     ulong nextBidirectionalStreamId;
 
     ulong nextUnidirectionalStreamId;
-
-    ulong nextPeerBidirectionalStreamId;
-
-    ulong nextPeerUnidirectionalStreamId;
 
     readonly Dictionary<ulong, QuicStream> streams = [];
 
@@ -148,24 +147,8 @@ public sealed class QuicConnection : IDisposable {
         return stream;
     }
 
-    public QuicStream ReceiveBidirectionalStream() {
-        ulong id = nextPeerBidirectionalStreamId++;
-
-        QuicStream stream = new(this, id << 2 | (endpointType == EndpointType.Server ? 0u : 1u), peerParameters.InitialMaxStreamDataBidiRemote);
-
-        streams.Add(stream.Id, stream);
-
-        return stream;
-    }
-
-    public QuicStream ReceiveUnidirectionalStream() {
-        ulong id = nextPeerUnidirectionalStreamId++;
-
-        QuicStream stream = new(this, id << 2 | 0b10 | (endpointType == EndpointType.Server ? 0u : 1u), 0);
-
-        streams.Add(stream.Id, stream);
-
-        return stream;
+    public ValueTask<QuicStream> ReceiveStream() {
+        return channel.Reader.ReadAsync(connectionSource.Token);
     }
 
     internal void StreamClosed(ulong id) {
@@ -347,17 +330,16 @@ public sealed class QuicConnection : IDisposable {
                         stream = new(this, streamFrame.Id, (streamFrame.Id & 0b10) == 0 ? peerParameters.InitialMaxStreamDataBidiRemote : 0);
 
                         streams[streamFrame.Id] = stream;
+
+                        await channel.Writer.WriteAsync(stream, connectionSource.Token);
                     }
 
                     stream.Put(streamFrame.Data, streamFrame.Offset, streamFrame.Fin);
 
                     break;
                 case MaxStreamDataFrame maxStreamDataFrame:
-                    if(!streams.TryGetValue(maxStreamDataFrame.Id, out stream)) {
-                        stream = new(this, maxStreamDataFrame.Id, (maxStreamDataFrame.Id & 0b10) == 0 ? peerParameters.InitialMaxStreamDataBidiRemote : 0);
-
-                        streams[maxStreamDataFrame.Id] = stream;
-                    }
+                    if(!streams.TryGetValue(maxStreamDataFrame.Id, out stream))
+                        throw new QuicException();
 
                     stream.MaxStreamData(maxStreamDataFrame.MaxStreamData);
 

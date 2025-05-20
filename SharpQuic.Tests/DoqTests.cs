@@ -20,8 +20,8 @@ public class DoqTests {
             Point = new(entry.AddressList[0], 853),
             Protocols = ["doq"],
             CancellationToken = source.Token,
-            DebugInputPacketLoss = 0.2,
-            DebugOutputPacketLoss = 0.2
+            DebugInputPacketLoss = 0.25,
+            DebugOutputPacketLoss = 0.25
         });
 
         string[] addresses = [

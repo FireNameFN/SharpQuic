@@ -64,7 +64,7 @@ public class QuicStreamTests {
 
         byte[] receiveData = new byte[data.Length];
 
-        QuicStream stream = server.ReceiveUnidirectionalStream();
+        QuicStream stream = await server.ReceiveStream();
 
         await stream.ReadAsync(receiveData);
 

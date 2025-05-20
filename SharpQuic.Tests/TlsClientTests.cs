@@ -17,7 +17,13 @@ public class TlsClientTests {
         
         X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
 
-        TlsClient client = new(new() { InitialSourceConnectionId = [] }, ["test"]);
+        TlsClient client = new(new() { InitialSourceConnectionId = [] }, ["test"], chainPolicy: new() {
+            TrustMode = X509ChainTrustMode.CustomRootTrust,
+            RevocationMode = X509RevocationMode.NoCheck,
+            CustomTrustStore = {
+                certificate
+            }
+        });
 
         TlsClient server = new(new() { InitialSourceConnectionId = [] }, ["test"], [certificate]);
 
