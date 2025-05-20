@@ -22,7 +22,7 @@ public sealed class ProbeTimeoutTimer {
         try {
             long min = 0;
 
-            while(true) {
+            while(!connection.connectionSource.IsCancellationRequested) {
                 long next = Math.Min(connection.initialStage?.ProbeTimeout ?? long.MaxValue, Math.Min(connection.handshakeStage?.ProbeTimeout ?? long.MaxValue, connection.applicationStage?.ProbeTimeout ?? long.MaxValue));
 
                 Console.WriteLine($"Initial: {connection.initialStage?.ProbeTimeout}. Handshake: {connection.handshakeStage?.ProbeTimeout}. Application: {connection.applicationStage?.ProbeTimeout}");

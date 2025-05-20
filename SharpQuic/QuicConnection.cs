@@ -43,7 +43,9 @@ public sealed class QuicConnection : IDisposable {
 
     readonly TaskCompletionSource ready = new();
 
-    internal readonly CancellationToken cancellationToken;
+    readonly CancellationToken handshakeToken;
+
+    internal readonly CancellationTokenSource connectionSource;
 
     readonly double debugInputPacketLoss;
 
@@ -76,13 +78,15 @@ public sealed class QuicConnection : IDisposable {
         };
 
         tlsClient = new(configuration.Parameters, configuration.Protocols, configuration.CertificateChain, configuration.ChainPolicy);
+        
+        handshakeToken = configuration.CancellationToken;
+
+        connectionSource = CancellationTokenSource.CreateLinkedTokenSource(configuration.CancellationToken);
 
         timer = new(this);
 
         sourceConnectionId = configuration.Parameters.InitialSourceConnectionId;
         destinationConnectionId = RandomNumberGenerator.GetBytes(8);
-        
-        cancellationToken = configuration.CancellationToken;
 
         debugInputPacketLoss = configuration.DebugInputPacketLoss;
         debugOutputPacketLoss = configuration.DebugOutputPacketLoss;
@@ -210,7 +214,7 @@ public sealed class QuicConnection : IDisposable {
             while(true) {
                 Console.WriteLine("Receiving");
 
-                UdpReceiveResult result = await client.ReceiveAsync(cancellationToken);
+                UdpReceiveResult result = await client.ReceiveAsync(state != State.Idle ? handshakeToken : connectionSource.Token);
 
                 Console.WriteLine($"Time: {(Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency}");
 
@@ -261,6 +265,8 @@ public sealed class QuicConnection : IDisposable {
             }
         } catch(Exception e) {
             Console.WriteLine(e);
+
+            connectionSource.Cancel();
 
             if(!ready.Task.IsCompleted)
                 ready.SetException(e);
@@ -469,6 +475,9 @@ public sealed class QuicConnection : IDisposable {
     }
 
     public void Dispose() {
+        connectionSource.Cancel();
+        connectionSource.Dispose();
+
         client.Dispose();
 
         foreach(QuicStream stream in streams.Values)

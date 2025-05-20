@@ -62,7 +62,7 @@ public sealed class QuicStream {
         while(offset < maxOffset) {
             if((offset >= outputStream.MaxData || outputStream.Available > 0) && position < data.Length) {
                 if(outputStream.Available < 1)
-                    await availableSemaphore.WaitAsync(connection.cancellationToken);
+                    await availableSemaphore.WaitAsync(connection.connectionSource.Token);
 
                 int writeLength = Math.Min(outputStream.Available, data.Length - position);
 
@@ -81,7 +81,7 @@ public sealed class QuicStream {
                 offset = sendOffset;
             } else {
                 if(peerMaxData <= offset)
-                    await maxDataSemaphore.WaitAsync(connection.cancellationToken);
+                    await maxDataSemaphore.WaitAsync(connection.connectionSource.Token);
                 else
                     throw new UnreachableException("Test?"); // TODO remove
             }
@@ -95,7 +95,7 @@ public sealed class QuicStream {
     }
 
     public async Task ReadAsync(Memory<byte> memory) {
-        await inputStream.ReadAsync(memory, connection.cancellationToken);
+        await inputStream.ReadAsync(memory, connection.connectionSource.Token);
 
         CheckClosed();
     }
