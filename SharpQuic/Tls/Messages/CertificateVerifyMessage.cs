@@ -25,19 +25,17 @@ public sealed class CertificateVerifyMessage : IMessage {
 
         string clientContextString = "TLS 1.3, client CertificateVerify";
 
-        Span<byte> context = stackalloc byte[Encoding.ASCII.GetByteCount(clientContextString)];
-
-        Encoding.ASCII.GetBytes(clientContextString, context);
-
-        ClientSignatureStart = [..repeations, ..context, 0];
-
         string serverContextString = "TLS 1.3, server CertificateVerify";
 
-        context = stackalloc byte[Encoding.ASCII.GetByteCount(serverContextString)];
+        Span<byte> context = stackalloc byte[Encoding.ASCII.GetMaxByteCount(Math.Max(clientContextString.Length, serverContextString.Length))];
 
-        Encoding.ASCII.GetBytes(serverContextString, context);
+        int length = Encoding.ASCII.GetBytes(clientContextString, context);
 
-        ServerSignatureStart = [..repeations, ..context, 0];
+        ClientSignatureStart = [..repeations, ..context[..length], 0];
+
+        length = Encoding.ASCII.GetBytes(serverContextString, context);
+
+        ServerSignatureStart = [..repeations, ..context[..length], 0];
     }
 
     public static CertificateVerifyMessage Create(EndpointType endpointType, byte[] messages, X509Certificate2 certificate) {

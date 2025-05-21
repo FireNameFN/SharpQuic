@@ -13,11 +13,11 @@ public static class HKDFExtensions {
 
         BinaryPrimitives.WriteUInt16BigEndian(lengthSpan, (ushort)output.Length);
 
-        Span<byte> labelSpan = stackalloc byte[Encoding.ASCII.GetByteCount(label)];
+        Span<byte> labelSpan = stackalloc byte[Encoding.ASCII.GetMaxByteCount(label.Length)];
 
-        Encoding.ASCII.GetBytes(label, labelSpan);
+        int length = Encoding.ASCII.GetBytes(label, labelSpan);
 
-        Span<byte> info = [..lengthSpan, (byte)(TlsLabel.Length + label.Length), ..TlsLabel, ..labelSpan, (byte)context.Length, ..context];
+        Span<byte> info = [..lengthSpan, (byte)(TlsLabel.Length + label.Length), ..TlsLabel, ..labelSpan[..length], (byte)context.Length, ..context];
 
         HKDF.Expand(name, secret, output, info);
     }
