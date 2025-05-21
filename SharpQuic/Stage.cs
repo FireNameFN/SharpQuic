@@ -226,6 +226,8 @@ public sealed class Stage {
                 WriteCrypto(packetWriter, packet.Offset, packet.Length, packet.Token);
             else if(packet.Type == PacketInfoType.HandshakeDone)
                 WriteHandshakeDone(packetWriter);
+            else if(packet.Type == PacketInfoType.MaxStreams)
+                WriteMaxStreams(packetWriter);
             
             WriteAck(packetWriter, true);
 
@@ -308,11 +310,6 @@ public sealed class Stage {
         
         ackEliciting = false;
 
-        if(type == StageType.Application) {
-            FrameWriter.WriteMaxStreams(true, connection.maxBidirectionalStreams);
-            FrameWriter.WriteMaxStreams(false, connection.maxUnidirectionalStreams);
-        }
-
         FrameWriter.WritePaddingUntil(20);
 
         uint number = GetNextPacketNumber(false);
@@ -326,6 +323,19 @@ public sealed class Stage {
         packets.Add(number, new(PacketInfoType.Ack, packetType, [..acks], 0, 0, 0, null));
 
         packetWriter.Write(packetType, number, FrameWriter.ToPayload());
+    }
+
+    public void WriteMaxStreams(PacketWriter packetWriter) {
+        FrameWriter.WriteMaxStreams(true, connection.maxBidirectionalStreams);
+        FrameWriter.WriteMaxStreams(false, connection.maxUnidirectionalStreams);
+
+        FrameWriter.WritePaddingUntil(20);
+
+        uint number = GetNextPacketNumber(false);
+
+        packets.Add(number, new(PacketInfoType.Ack, PacketType.OneRtt, [..acks], 0, 0, 0, null));
+
+        packetWriter.Write(PacketType.OneRtt, number, FrameWriter.ToPayload());
     }
 
     public void WriteProbe(PacketWriter packetWriter) {
@@ -395,6 +405,7 @@ public sealed class Stage {
         Ack,
         Crypto,
         Stream,
+        MaxStreams,
         HandshakeDone
     }
 }

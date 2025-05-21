@@ -36,7 +36,9 @@ public sealed class QuicStream {
 
     ulong offset;
 
-    ulong peerMaxData = 1024;
+    ulong peerMaxData;
+
+    ulong sentMaxData = 1 << 20;
 
     bool closed;
 
@@ -53,6 +55,11 @@ public sealed class QuicStream {
             if(peerClosed)
                 return Task.CompletedTask;
 
+            if(inputStream.MaxData - sentMaxData < 1200)
+                return Task.CompletedTask;
+
+            sentMaxData = inputStream.MaxData;
+
             return SendMaxData().AsTask();
         };
     }
@@ -60,6 +67,11 @@ public sealed class QuicStream {
     public async Task WriteAsync(ReadOnlyMemory<byte> data, bool close = false) {
         if(closed)
             throw new QuicException();
+
+        if(outputStream.Available >= data.Length && outputStream.MaxData - this.offset + (ulong)data.Length < 1200) {
+            outputStream.Write(data.Span);
+            return;
+        }
 
         int position = 0;
 
@@ -102,6 +114,19 @@ public sealed class QuicStream {
         closed = close;
     }
 
+    public ValueTask<int> FlushAsync() {
+        ulong length = outputStream.MaxData - this.offset;
+
+        if(length < 1)
+            return ValueTask.FromResult(0);
+
+        ulong offset = this.offset;
+
+        this.offset += length;
+
+        return SendStreamAsync(offset, (int)length, closed);
+    }
+
     public async Task ReadAsync(Memory<byte> memory) {
         await inputStream.ReadAsync(memory, connection.connectionSource.Token);
 
@@ -109,9 +134,9 @@ public sealed class QuicStream {
     }
 
     internal void Put(ReadOnlySpan<byte> data, ulong offset, bool close) {
-        inputStream.Write(data, offset);
+        peerClosed |= close;
 
-        peerClosed = close;
+        inputStream.Write(data, offset);
     }
 
     internal void MaxStreamData(ulong maxStreamData) {

@@ -54,6 +54,8 @@ public class DoqTests {
 
             await stream.WriteAsync(data, true);
 
+            await stream.FlushAsync();
+
             await stream.ReadAsync(lengthArray);
 
             int length = BinaryPrimitives.ReadUInt16BigEndian(lengthArray);

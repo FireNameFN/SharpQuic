@@ -37,6 +37,8 @@ public class QuicStreamTests {
 
                 await stream.WriteAsync(data, true);
 
+                await stream.FlushAsync();
+
                 source.SetResult();
             } catch(Exception e) {
                 source.SetException(e);

@@ -16,7 +16,7 @@ using SharpQuic.Tls.Enums;
 namespace SharpQuic;
 
 public sealed class QuicConnection : IDisposable {
-    readonly UdpClient client = new();
+    readonly UdpClient client;
 
     readonly TlsClient tlsClient;
 
@@ -77,6 +77,10 @@ public sealed class QuicConnection : IDisposable {
     readonly Dictionary<ulong, QuicStream> streams = [];
 
     QuicConnection(EndpointType endpointType, QuicConfiguration configuration) {
+        client = new() {
+            ExclusiveAddressUse = false
+        };
+
         this.endpointType = endpointType;
         protection = new(endpointType, configuration.Parameters.InitialSourceConnectionId);
 
@@ -178,6 +182,8 @@ public sealed class QuicConnection : IDisposable {
                 maxUnidirectionalStreams++;
 
         stream.Dispose();
+
+        applicationStage.WriteMaxStreams(packetWriter);
     }
 
     internal ValueTask<int> SendAsync(PacketWriter packetWriter) {
