@@ -505,6 +505,9 @@ public sealed class QuicConnection : IDisposable {
         connectionSource.Cancel();
         connectionSource.Dispose();
 
+        openBidirectionalStreamSemaphore.Dispose();
+        openUnidirectionalStreamSemaphore.Dispose();
+
         client.Dispose();
 
         foreach(QuicStream stream in streams.Values)
