@@ -74,18 +74,18 @@ public sealed class QuicStream {
         ulong maxOffset = offset + (ulong)data.Length;
         
         while(offset < maxOffset) {
-            if(position < data.Length) {
-                if(offset >= outputStream.MaxData || outputStream.Available > 0) {
-                    if(outputStream.Available < 1)
-                        await availableSemaphore.WaitAsync(connection.connectionSource.Token);
+            if(position < data.Length && (offset >= outputStream.MaxData || outputStream.Available > 0)) {
+                if(outputStream.Available < 1)
+                    await availableSemaphore.WaitAsync(connection.connectionSource.Token);
 
-                    int writeLength = Math.Min(outputStream.Available, data.Length - position);
+                int writeLength = Math.Min(outputStream.Available, data.Length - position);
 
-                    outputStream.Write(data.Span.Slice(position, writeLength));
+                outputStream.Write(data.Span.Slice(position, writeLength));
 
-                    position += writeLength;
-                }
-            } else if(outputStream.MaxData - offset < 1200 && !close)
+                position += writeLength;
+            }
+
+            if(position >= data.Length && outputStream.MaxData - offset < 1200 && !close)
                 return;
 
             int length = Math.Min(1200, Math.Min((int)(peerMaxData - offset), (int)(outputStream.MaxData - offset)));
@@ -190,7 +190,7 @@ public sealed class QuicStream {
 
         Console.WriteLine($"WRITE STREAM TO {offset + (ulong)length}");
 
-        frameWriter.WritePaddingUntil(1200);
+        frameWriter.WritePaddingUntil(20);
 
         uint number = connection.applicationStage.GetNextPacketNumber(Id);
 
