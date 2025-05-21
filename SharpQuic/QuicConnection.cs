@@ -62,6 +62,18 @@ public sealed class QuicConnection : IDisposable {
 
     ulong nextUnidirectionalStreamId;
 
+    internal ulong maxBidirectionalStreams;
+
+    internal ulong maxUnidirectionalStreams;
+
+    ulong peerMaxBidirectionalStreams;
+
+    ulong peerMaxUnidirectionalStreams;
+
+    SemaphoreSlim openBidirectionalStreamSemaphore;
+
+    SemaphoreSlim openUnidirectionalStreamSemaphore;
+
     readonly Dictionary<ulong, QuicStream> streams = [];
 
     QuicConnection(EndpointType endpointType, QuicConfiguration configuration) {
@@ -89,6 +101,9 @@ public sealed class QuicConnection : IDisposable {
 
         debugInputPacketLoss = configuration.DebugInputPacketLoss;
         debugOutputPacketLoss = configuration.DebugOutputPacketLoss;
+
+        maxBidirectionalStreams = configuration.Parameters.InitialMaxStreamsBidi;
+        maxUnidirectionalStreams = configuration.Parameters.InitialMaxStreamsUni;
     }
 
     public static async Task<QuicConnection> ConnectAsync(QuicConfiguration configuration) {
@@ -127,7 +142,9 @@ public sealed class QuicConnection : IDisposable {
         return connection;
     }
 
-    public QuicStream OpenBidirectionalStream() {
+    public async Task<QuicStream> OpenBidirectionalStream() {
+        await openBidirectionalStreamSemaphore.WaitAsync();
+
         ulong id = nextBidirectionalStreamId++;
 
         QuicStream stream = new(this, id << 2 | (endpointType == EndpointType.Client ? 0u : 1u), peerParameters.InitialMaxStreamDataBidiLocal);
@@ -137,7 +154,9 @@ public sealed class QuicConnection : IDisposable {
         return stream;
     }
 
-    public QuicStream OpenUnidirectionalStream() {
+    public async Task<QuicStream> OpenUnidirectionalStream() {
+        await openUnidirectionalStreamSemaphore.WaitAsync();
+
         ulong id = nextUnidirectionalStreamId++;
 
         QuicStream stream = new(this, id << 2 | 0b10 | (endpointType == EndpointType.Client ? 0u : 1u), peerParameters.InitialMaxStreamDataUni);
@@ -153,6 +172,12 @@ public sealed class QuicConnection : IDisposable {
 
     internal void StreamClosed(ulong id) {
         streams.Remove(id, out QuicStream stream);
+
+        if(stream.Client == (endpointType == EndpointType.Client))
+            if(stream.Bidirectional)
+                maxBidirectionalStreams++;
+            else
+                maxUnidirectionalStreams++;
 
         stream.Dispose();
     }
@@ -344,6 +369,20 @@ public sealed class QuicConnection : IDisposable {
                     stream.MaxStreamData(maxStreamDataFrame.MaxStreamData);
 
                     break;
+                case MaxStreamsFrame maxStreamsFrame:
+                    if(maxStreamsFrame.Bidirectional) {
+                        if(maxStreamsFrame.MaxStreams > peerMaxBidirectionalStreams) {
+                            openBidirectionalStreamSemaphore.Release((int)(maxStreamsFrame.MaxStreams - peerMaxBidirectionalStreams));
+                            peerMaxBidirectionalStreams = maxStreamsFrame.MaxStreams;
+                        }
+                    } else {
+                        if(maxStreamsFrame.MaxStreams > peerMaxUnidirectionalStreams) {
+                            openUnidirectionalStreamSemaphore.Release((int)(maxStreamsFrame.MaxStreams - peerMaxUnidirectionalStreams));
+                            peerMaxUnidirectionalStreams = maxStreamsFrame.MaxStreams;
+                        }
+                    }
+
+                    break;
                 case NewConnectionIdFrame:
                     //destinationConnectionId = frame.Data;
 
@@ -445,6 +484,12 @@ public sealed class QuicConnection : IDisposable {
             }
 
             Console.WriteLine("Generated application keys.");
+
+            peerMaxBidirectionalStreams = peerParameters.InitialMaxStreamsBidi;
+            peerMaxUnidirectionalStreams = peerParameters.InitialMaxStreamsUni;
+
+            openBidirectionalStreamSemaphore = new((int)peerParameters.InitialMaxStreamsBidi);
+            openUnidirectionalStreamSemaphore = new((int)peerParameters.InitialMaxStreamsUni);
 
             ready.SetResult();
 

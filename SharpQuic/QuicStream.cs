@@ -10,6 +10,14 @@ namespace SharpQuic;
 public sealed class QuicStream {
     public ulong Id { get; }
 
+    public bool Client => (Id & 0b01) == 0;
+
+    public bool Server => (Id & 0b01) != 0;
+
+    public bool Bidirectional => (Id & 0b10) == 0;
+
+    public bool Unidirectional => (Id & 0b10) != 0;
+
     readonly QuicConnection connection;
 
     readonly CutInputStream inputStream = new(1 << 20);

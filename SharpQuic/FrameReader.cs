@@ -22,7 +22,7 @@ public sealed class FrameReader {
             FrameType.NewToken => ReadNewToken(),
             >= FrameType.Stream and <= FrameType.StreamMax => ReadStream(type),
             FrameType.MaxStreamData => ReadMaxStreamData(),
-            FrameType.MaxStreams => ReadMaxStreams(),
+            >= FrameType.MaxStreamsBidirectional and <= FrameType.MaxStreamsUnidirectional => ReadMaxStreams(type),
             FrameType.NewConnectionId => ReadNewConnectionId(),
             FrameType.ConnectionClose => ReadConnectionClose(false),
             FrameType.ConnectionClose2 => ReadConnectionClose(true),
@@ -114,10 +114,13 @@ public sealed class FrameReader {
         };
     }
 
-    Frame ReadMaxStreams() {
-        Serializer.ReadVariableLength(stream);
+    Frame ReadMaxStreams(FrameType type) {
+        ulong maxStreams = Serializer.ReadVariableLength(stream).Value;
 
-        return new HandshakeDoneFrame();
+        return new MaxStreamsFrame() {
+            Bidirectional = type == FrameType.MaxStreamsBidirectional,
+            MaxStreams = maxStreams
+        };
     }
 
     Frame ReadNewConnectionId() {

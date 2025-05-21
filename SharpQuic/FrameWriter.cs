@@ -101,6 +101,12 @@ public sealed class FrameWriter {
         Serializer.WriteVariableLength(stream, maxData);
     }
 
+    public void WriteMaxStreams(bool bidirectional, ulong maxStreams) {
+        Serializer.WriteVariableLength(stream, (ulong)(bidirectional ? FrameType.MaxStreamsBidirectional : FrameType.MaxStreamsUnidirectional));
+
+        Serializer.WriteVariableLength(stream, maxStreams);
+    }
+
     public void WriteHandshakeDone() {
         Serializer.WriteVariableLength(stream, (ulong)FrameType.HandshakeDone);
     }

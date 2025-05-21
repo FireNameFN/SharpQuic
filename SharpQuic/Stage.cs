@@ -308,6 +308,11 @@ public sealed class Stage {
         
         ackEliciting = false;
 
+        if(type == StageType.Application) {
+            FrameWriter.WriteMaxStreams(true, connection.maxBidirectionalStreams);
+            FrameWriter.WriteMaxStreams(false, connection.maxUnidirectionalStreams);
+        }
+
         FrameWriter.WritePaddingUntil(20);
 
         uint number = GetNextPacketNumber(false);

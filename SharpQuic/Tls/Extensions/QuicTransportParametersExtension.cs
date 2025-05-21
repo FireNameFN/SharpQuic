@@ -30,6 +30,11 @@ public static class QuicTransportParametersExtension {
 
         EncodeParameter(parametersStream, 0x0b, (ulong)parameters.MaxAckDelay);
 
+        if(parameters.DisableActiveMigration) {
+            Serializer.WriteVariableLength(parametersStream, 0x0c);
+            Serializer.WriteVariableLength(parametersStream, 0);
+        }
+
         Serializer.WriteVariableLength(parametersStream, 0x0f);
         Serializer.WriteVariableLength(parametersStream, (ulong)parameters.InitialSourceConnectionId.Length);
         parametersStream.Write(parameters.InitialSourceConnectionId);

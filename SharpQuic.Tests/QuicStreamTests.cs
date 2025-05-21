@@ -33,7 +33,7 @@ public class QuicStreamTests {
                     CancellationToken = timeoutSource.Token
                 });
 
-                QuicStream stream = client.OpenUnidirectionalStream();
+                QuicStream stream = await client.OpenUnidirectionalStream();
 
                 await stream.WriteAsync(data, true);
 

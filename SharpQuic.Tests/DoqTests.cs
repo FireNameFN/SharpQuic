@@ -32,7 +32,7 @@ public class DoqTests {
         ];
 
         foreach(string address in addresses) {
-            QuicStream stream = connection.OpenBidirectionalStream();
+            QuicStream stream = await connection.OpenBidirectionalStream();
 
             Request request = new() {
                 Id = 0,
@@ -75,7 +75,7 @@ public class DoqTests {
             Protocols = ["doq"]
         });
 
-        QuicStream stream = connection.OpenBidirectionalStream();
+        QuicStream stream = await connection.OpenBidirectionalStream();
 
         Request request = new();
 
