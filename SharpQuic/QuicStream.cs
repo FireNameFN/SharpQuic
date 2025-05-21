@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpQuic.IO;
@@ -68,28 +67,26 @@ public sealed class QuicStream {
         if(closed)
             throw new QuicException();
 
-        if(outputStream.Available >= data.Length && outputStream.MaxData - this.offset + (ulong)data.Length < 1200) {
-            outputStream.Write(data.Span);
-            return;
-        }
+        closed = close;
 
         int position = 0;
 
-        ulong offset = this.offset;
-
-        ulong maxOffset = this.offset + (ulong)data.Length;
+        ulong maxOffset = offset + (ulong)data.Length;
         
         while(offset < maxOffset) {
-            if((offset >= outputStream.MaxData || outputStream.Available > 0) && position < data.Length) {
-                if(outputStream.Available < 1)
-                    await availableSemaphore.WaitAsync(connection.connectionSource.Token);
+            if(position < data.Length) {
+                if(offset >= outputStream.MaxData || outputStream.Available > 0) {
+                    if(outputStream.Available < 1)
+                        await availableSemaphore.WaitAsync(connection.connectionSource.Token);
 
-                int writeLength = Math.Min(outputStream.Available, data.Length - position);
+                    int writeLength = Math.Min(outputStream.Available, data.Length - position);
 
-                outputStream.Write(data.Span.Slice(position, writeLength));
+                    outputStream.Write(data.Span.Slice(position, writeLength));
 
-                position += writeLength;
-            }
+                    position += writeLength;
+                }
+            } else if(outputStream.MaxData - offset < 1200 && !close)
+                return;
 
             int length = Math.Min(1200, Math.Min((int)(peerMaxData - offset), (int)(outputStream.MaxData - offset)));
 
@@ -99,32 +96,40 @@ public sealed class QuicStream {
                 await SendStreamAsync(offset, length, close && sendOffset >= maxOffset);
 
                 offset = sendOffset;
-            } else {
-                if(peerMaxData <= offset)
-                    await maxDataSemaphore.WaitAsync(connection.connectionSource.Token);
-                else
-                    throw new UnreachableException("Test?"); // TODO remove
-            }
+            } else
+                await maxDataSemaphore.WaitAsync(connection.connectionSource.Token);
         }
 
-        this.offset = maxOffset;
-
         Console.WriteLine($"Stream Write {data.Length}");
-
-        closed = close;
     }
 
-    public ValueTask<int> FlushAsync() {
+    public ValueTask<int> FlushAsync(bool close = false) {
+        if(closed)
+            return ValueTask.FromResult(0);
+
         ulong length = outputStream.MaxData - this.offset;
 
-        if(length < 1)
+        if(length < 1) {
+            if(close)
+                return SendStreamAsync(this.offset, 0, true);
+
             return ValueTask.FromResult(0);
+        }
+
+        closed |= close;
 
         ulong offset = this.offset;
 
         this.offset += length;
 
         return SendStreamAsync(offset, (int)length, closed);
+    }
+
+    public ValueTask<int> CloseAsync() {
+        if(closed)
+            return ValueTask.FromResult(0);
+
+        return SendStreamAsync(offset, 0, true);
     }
 
     public async Task ReadAsync(Memory<byte> memory) {
