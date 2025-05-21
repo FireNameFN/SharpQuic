@@ -136,7 +136,7 @@ public sealed class QuicStream {
 
         outputStream.Confirm(packet.Offset, (ulong)packet.Length);
 
-        if(outputStream.Available > 0)
+        if(outputStream.Available > 0 && availableSemaphore.CurrentCount < 1)
             availableSemaphore.Release();
 
         CheckClosed();

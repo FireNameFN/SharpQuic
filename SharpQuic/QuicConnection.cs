@@ -135,8 +135,6 @@ public sealed class QuicConnection : IDisposable {
 
         await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
 
-        await connection.timer.StartAsync();
-
         await connection.ready.Task;
 
         return connection;
@@ -419,6 +417,10 @@ public sealed class QuicConnection : IDisposable {
             protection.CipherSuite = tlsClient.CipherSuite;
 
             if(endpointType == EndpointType.Server) {
+                initialStage.CalculateProbeTimeout();
+
+                await timer.StartAsync();
+
                 peerParameters = tlsClient.PeerParameters;
 
                 initialStage.AckDelayExponent = peerParameters.AckDelayExponent;
