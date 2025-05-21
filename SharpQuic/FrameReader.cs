@@ -74,7 +74,7 @@ public sealed class FrameReader {
 
         stream.Position += (long)length;
 
-        return new HandshakeDoneFrame();
+        return null;
     }
 
     Frame ReadStream(FrameType type) {
