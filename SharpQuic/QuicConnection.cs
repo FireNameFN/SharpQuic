@@ -119,8 +119,6 @@ public sealed class QuicConnection : IDisposable {
 
         await connection.SendClientHelloAsync();
 
-        await connection.FlushAsync();
-
         await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
 
         await connection.timer.StartAsync();
@@ -172,7 +170,7 @@ public sealed class QuicConnection : IDisposable {
         return channel.Reader.ReadAsync(connectionSource.Token);
     }
 
-    internal void StreamClosed(ulong id) {
+    internal void StreamClosed(PacketWriter packetWriter, ulong id) {
         streams.Remove(id, out QuicStream stream);
 
         if(stream.Client == (endpointType == EndpointType.Client))
@@ -212,11 +210,11 @@ public sealed class QuicConnection : IDisposable {
     }
 
     internal ValueTask<int> StreamPacketLostAsync(uint number, ulong streamId) {
-        return streams[streamId].PacketLostAsync(number);
+        return streams[streamId].PacketLostAsync(packetWriter, number);
     }
 
     internal void StreamPacketAck(uint number, ulong streamId) {
-        streams[streamId].PacketAck(number);
+        streams[streamId].PacketAck(packetWriter, number);
     }
 
     async Task RunnerAsync() {
@@ -322,13 +320,13 @@ public sealed class QuicConnection : IDisposable {
                 case AckFrame ackFrame:
                     switch(packet.PacketType) {
                         case PacketType.Initial:
-                            await initialStage.PeerAckAsync(ackFrame);
+                            await initialStage.PeerAckAsync(packetWriter, ackFrame);
                             break;
                         case PacketType.Handshake:
-                            await handshakeStage.PeerAckAsync(ackFrame);
+                            await handshakeStage.PeerAckAsync(packetWriter, ackFrame);
                             break;
                         case PacketType.OneRtt:
-                            await applicationStage.PeerAckAsync(ackFrame);
+                            await applicationStage.PeerAckAsync(packetWriter, ackFrame);
                             break;
                     }
 
@@ -505,8 +503,10 @@ public sealed class QuicConnection : IDisposable {
         }
     }
 
-    Task SendClientHelloAsync(byte[] token = null) {
-        return initialStage.WriteCryptoAsync(packetWriter, tlsClient.SendClientHello(), token ?? []);
+    async Task SendClientHelloAsync(byte[] token = null) {
+        await initialStage.WriteCryptoAsync(packetWriter, tlsClient.SendClientHello(), token ?? []);
+
+        await FlushAsync();
     }
 
     public void Dispose() {

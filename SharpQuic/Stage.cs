@@ -12,8 +12,6 @@ namespace SharpQuic;
 public sealed class Stage {
     readonly QuicConnection connection;
 
-    readonly PacketWriter packetWriter;
-
     public FrameWriter FrameWriter { get; } = new();
 
     public KeySet KeySet { get; init; }
@@ -62,7 +60,6 @@ public sealed class Stage {
 
     internal Stage(QuicConnection connection, StageType type) {
         this.connection = connection;
-        packetWriter = new(connection);
         this.type = type;
 
         if(type == StageType.Application)
@@ -77,7 +74,7 @@ public sealed class Stage {
         this.ackEliciting |= ackEliciting;
     }
 
-    public async Task PeerAckAsync(AckFrame frame) {
+    public async Task PeerAckAsync(PacketWriter packetWriter, AckFrame frame) {
         bool ackEliciting = false;
 
         int FindInFlightPacket(uint number) {
@@ -231,7 +228,7 @@ public sealed class Stage {
             
             WriteAck(packetWriter, true);
 
-            return connection.SendAsync(packetWriter);
+            return ValueTask.FromResult(0);
         }
     }
 

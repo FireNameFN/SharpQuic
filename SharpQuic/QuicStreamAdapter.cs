@@ -8,11 +8,11 @@ namespace SharpQuic;
 public sealed class QuicStreamAdapter(QuicStream stream) : Stream {
     public QuicStream Stream { get; } = stream;
 
-    public override bool CanRead => true;
+    public override bool CanRead => Stream.CanRead;
 
     public override bool CanSeek => false;
 
-    public override bool CanWrite => true;
+    public override bool CanWrite => Stream.CanWrite;
 
     public override long Length => throw new NotSupportedException();
 
