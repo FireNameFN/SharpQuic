@@ -238,18 +238,24 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         packet.Payload = new byte[payload.Length];
 
-        switch(CipherSuite) {
-            case CipherSuite.Aes128GcmSHA256:
-            case CipherSuite.Aes256GcmSHA384:
-                using(AesGcm aesGcm = new(keySet.DestinationKey, 16))
-                    aesGcm.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
+        try {
+            switch(CipherSuite) {
+                case CipherSuite.Aes128GcmSHA256:
+                case CipherSuite.Aes256GcmSHA384:
+                    using(AesGcm aesGcm = new(keySet.DestinationKey, 16))
+                        aesGcm.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
 
-                break;
-            case CipherSuite.ChaCha20Poly1305Sha256:
-                using(ChaCha20Poly1305 chacha = new(keySet.SourceKey))
-                    chacha.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
+                    break;
+                case CipherSuite.ChaCha20Poly1305Sha256:
+                    using(ChaCha20Poly1305 chacha = new(keySet.SourceKey))
+                        chacha.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
 
-                break;
+                    break;
+            }
+        } catch(AuthenticationTagMismatchException) {
+            Console.WriteLine("Invalid tag.");
+
+            return null;
         }
 
         return packet;

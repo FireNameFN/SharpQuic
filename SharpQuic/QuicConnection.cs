@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Threading;
@@ -16,7 +17,7 @@ using SharpQuic.Tls.Enums;
 namespace SharpQuic;
 
 public sealed class QuicConnection : IDisposable {
-    readonly UdpClient client;
+    internal readonly Socket socket;
 
     readonly TlsClient tlsClient;
 
@@ -54,9 +55,11 @@ public sealed class QuicConnection : IDisposable {
 
     readonly double debugOutputPacketLoss;
 
+    public IPEndPoint Point { get; internal set; }
+
     public string Protocol { get; private set; }
 
-    State state;
+    internal State state;
 
     ulong nextBidirectionalStreamId;
 
@@ -76,11 +79,8 @@ public sealed class QuicConnection : IDisposable {
 
     readonly Dictionary<ulong, QuicStream> streams = [];
 
-    QuicConnection(EndpointType endpointType, QuicConfiguration configuration) {
-        client = new() {
-            ExclusiveAddressUse = false
-        };
-
+    internal QuicConnection(Socket socket, EndpointType endpointType, QuicConfiguration configuration) {
+        this.socket = socket;
         this.endpointType = endpointType;
         protection = new(endpointType, configuration.Parameters.InitialSourceConnectionId);
 
@@ -113,9 +113,11 @@ public sealed class QuicConnection : IDisposable {
     public static async Task<QuicConnection> ConnectAsync(QuicConfiguration configuration) {
         configuration.Parameters.InitialSourceConnectionId = RandomNumberGenerator.GetBytes(8);
 
-        QuicConnection connection = new(EndpointType.Client, configuration);
+        QuicConnection connection = new(new(SocketType.Dgram, ProtocolType.Udp), EndpointType.Client, configuration);
 
-        connection.client.Connect(configuration.Point);
+        connection.socket.Connect(configuration.Point);
+
+        connection.Point = configuration.Point;
 
         await connection.SendClientHelloAsync();
 
@@ -131,9 +133,11 @@ public sealed class QuicConnection : IDisposable {
     public static async Task<QuicConnection> ListenAsync(QuicConfiguration configuration) {
         configuration.Parameters.InitialSourceConnectionId = RandomNumberGenerator.GetBytes(8);
 
-        QuicConnection connection = new(EndpointType.Server, configuration);
+        QuicConnection connection = new(new(SocketType.Dgram, ProtocolType.Udp), EndpointType.Server, configuration);
 
-        connection.client.Client.Bind(configuration.Point);
+        connection.socket.Bind(configuration.Point);
+
+        connection.Point = configuration.Point;
 
         await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
 
@@ -198,7 +202,7 @@ public sealed class QuicConnection : IDisposable {
 
         Console.WriteLine($"Sending datagram: {datagram.Length}");
 
-        return client.SendAsync(datagram);
+        return socket.SendAsync(datagram);
     }
 
     internal ValueTask<int> FlushAsync() {
@@ -219,59 +223,24 @@ public sealed class QuicConnection : IDisposable {
 
     async Task RunnerAsync() {
         try {
+            byte[] buffer = new byte[1500];
+
             long time = Stopwatch.GetTimestamp();
 
             while(true) {
-                Console.WriteLine("Receiving");
+                Console.WriteLine("Weh receiving");
 
-                UdpReceiveResult result = await client.ReceiveAsync(state != State.Idle ? handshakeToken : connectionSource.Token);
+                SocketReceiveFromResult result = await socket.ReceiveFromAsync(buffer, Point, state != State.Idle ? handshakeToken : connectionSource.Token);
 
                 Console.WriteLine($"Time: {(Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency}");
 
-                if(Random.Shared.NextDouble() < debugInputPacketLoss) {
-                    Console.WriteLine($"Losed datagram: {result.Buffer.Length}");
-                    
-                    continue;
+                if(state == State.Initial && endpointType == EndpointType.Server) {
+                    Console.WriteLine($"Connect to: {result.RemoteEndPoint}");
+                    socket.Connect(result.RemoteEndPoint);
+                    Point = (IPEndPoint)result.RemoteEndPoint;
                 }
 
-                Console.WriteLine($"Received datagram: {result.Buffer.Length}");
-
-                if(state == State.Initial && endpointType == EndpointType.Server)
-                    client.Connect(result.RemoteEndPoint);
-
-                MemoryStream stream = new(result.Buffer);
-
-                while(stream.Position < stream.Length) {
-                    Packet packet = protection.Unprotect(stream, initialStage?.KeySet, handshakeStage?.KeySet, applicationStage?.KeySet);
-
-                    if(packet is null) {
-                        Console.WriteLine("Invalid packet");
-                        break;
-                    }
-
-                    if(packet is not RetryPacket) {
-                        Console.WriteLine($"Unprotected packet: {packet.PacketType} {packet.PacketNumber} {packet.Payload.Length}");
-
-                        HashSet<uint> received = packet.PacketType switch {
-                            PacketType.Initial => initialStage.Received,
-                            PacketType.Handshake => handshakeStage.Received,
-                            PacketType.OneRtt => applicationStage.Received,
-                            _ => throw new NotImplementedException()
-                        };
-
-                        if(!received.Add(packet.PacketNumber)) {
-                            Console.WriteLine($"Duplicate");
-                            continue;
-                        }
-                    } else
-                        Console.WriteLine($"Retry packet");
-                    
-                    await HandlePacketAsync(packet);
-
-                    await HandleHandshakeAsync();
-
-                    await FlushAsync();
-                }
+                await ReceiveAsync(buffer, result.ReceivedBytes);
             }
         } catch(Exception e) {
             Console.WriteLine(e);
@@ -280,6 +249,51 @@ public sealed class QuicConnection : IDisposable {
 
             if(!ready.Task.IsCompleted)
                 ready.SetException(e);
+        }
+    }
+
+    internal async Task ReceiveAsync(byte[] data, int length) {
+        if(Random.Shared.NextDouble() < debugInputPacketLoss) {
+            Console.WriteLine($"Losed datagram: {length}");
+            return;
+        }
+
+        Console.WriteLine($"Received datagram: {length}");
+
+        MemoryStream stream = new(data, 0, length);
+
+        while(stream.Position < stream.Length) {
+            Console.WriteLine("Unprotecting");
+
+            Packet packet = protection.Unprotect(stream, initialStage?.KeySet, handshakeStage?.KeySet, applicationStage?.KeySet);
+
+            if(packet is null) {
+                Console.WriteLine("Invalid packet");
+                return;
+            }
+
+            if(packet is not RetryPacket) {
+                Console.WriteLine($"Unprotected packet: {packet.PacketType} {packet.PacketNumber} {packet.Payload.Length}");
+
+                HashSet<uint> received = packet.PacketType switch {
+                    PacketType.Initial => initialStage.Received,
+                    PacketType.Handshake => handshakeStage.Received,
+                    PacketType.OneRtt => applicationStage.Received,
+                    _ => throw new NotImplementedException()
+                };
+
+                if(!received.Add(packet.PacketNumber)) {
+                    Console.WriteLine($"Duplicate");
+                    continue;
+                }
+            } else
+                Console.WriteLine($"Retry packet");
+            
+            await HandlePacketAsync(packet);
+
+            await HandleHandshakeAsync();
+
+            await FlushAsync();
         }
     }
 
@@ -516,13 +530,13 @@ public sealed class QuicConnection : IDisposable {
         openBidirectionalStreamSemaphore.Dispose();
         openUnidirectionalStreamSemaphore.Dispose();
 
-        client.Dispose();
+        socket.Dispose();
 
         foreach(QuicStream stream in streams.Values)
             stream.Dispose();
     }
 
-    enum State {
+    internal enum State {
         Initial,
         Handshake,
         Idle

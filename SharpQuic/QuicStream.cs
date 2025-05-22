@@ -17,11 +17,11 @@ public sealed class QuicStream {
 
     public bool Unidirectional => (Id & 0b10) != 0;
 
-    public bool CanRead => connection.endpointType == EndpointType.Client != Client || Bidirectional;
+    public bool CanRead => Connection.endpointType == EndpointType.Client != Client || Bidirectional;
 
-    public bool CanWrite => connection.endpointType == EndpointType.Client == Client || Bidirectional;
+    public bool CanWrite => Connection.endpointType == EndpointType.Client == Client || Bidirectional;
 
-    readonly QuicConnection connection;
+    public QuicConnection Connection { get; }
 
     readonly CutInputStream inputStream = new(1 << 20);
 
@@ -48,7 +48,7 @@ public sealed class QuicStream {
     bool peerClosed;
 
     internal QuicStream(QuicConnection connection, ulong id, ulong peerMaxData) {
-        this.connection = connection;
+        Connection = connection;
         this.peerMaxData = peerMaxData;
         Id = id;
 
@@ -86,7 +86,7 @@ public sealed class QuicStream {
         while(offset < maxOffset) {
             if(position < data.Length && (offset >= outputStream.MaxData || outputStream.Available > 0)) {
                 if(outputStream.Available < 1)
-                    await availableSemaphore.WaitAsync(connection.connectionSource.Token);
+                    await availableSemaphore.WaitAsync(Connection.connectionSource.Token);
 
                 int writeLength = Math.Min(outputStream.Available, data.Length - position);
 
@@ -107,7 +107,7 @@ public sealed class QuicStream {
 
                 offset = sendOffset;
             } else
-                await maxDataSemaphore.WaitAsync(connection.connectionSource.Token);
+                await maxDataSemaphore.WaitAsync(Connection.connectionSource.Token);
         }
 
         Console.WriteLine($"Stream Write {data.Length}");
@@ -143,7 +143,7 @@ public sealed class QuicStream {
     }
 
     public async Task ReadAsync(Memory<byte> memory) {
-        await inputStream.ReadAsync(memory, connection.connectionSource.Token);
+        await inputStream.ReadAsync(memory, Connection.connectionSource.Token);
 
         CheckClosed(packetWriter);
     }
@@ -202,13 +202,13 @@ public sealed class QuicStream {
 
         frameWriter.WritePaddingUntil(20);
 
-        uint number = connection.applicationStage.GetNextPacketNumber(Id);
+        uint number = Connection.applicationStage.GetNextPacketNumber(Id);
 
         packetWriter.Write(PacketType.OneRtt, number, frameWriter.ToPayload(), null);
 
         packets.Add(number, new(true, offset, data.Length, fin));
 
-        return connection.SendAsync(packetWriter);
+        return Connection.SendAsync(packetWriter);
     }
 
     ValueTask<int> SendMaxStreamData(PacketWriter packetWriter) {
@@ -216,18 +216,18 @@ public sealed class QuicStream {
 
         frameWriter.WritePaddingUntil(20);
 
-        uint number = connection.applicationStage.GetNextPacketNumber(Id);
+        uint number = Connection.applicationStage.GetNextPacketNumber(Id);
 
         packetWriter.Write(PacketType.OneRtt, number, frameWriter.ToPayload(), null);
 
         packets.Add(number, new(false, 0, 0, false));
 
-        return connection.SendAsync(packetWriter);
+        return Connection.SendAsync(packetWriter);
     }
 
     void CheckClosed(PacketWriter packetWriter) {
         if(closed && peerClosed && inputStream.Empty && outputStream.Offset >= offset)
-            connection.StreamClosed(packetWriter, Id);
+            Connection.StreamClosed(packetWriter, Id);
     }
 
     internal void Dispose() {
