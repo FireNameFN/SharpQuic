@@ -22,6 +22,8 @@ public sealed class CutInputStream(int bufferLength) : IDisposable {
 
     public int Length => regions.Count > 0 && regions[0].Min <= Offset ? (int)(regions[0].Max - Offset) : 0;
 
+    public bool Empty => regions.Count < 1;
+
     public event Func<Task> MaxDataIncreased;
 
     public void Write(ReadOnlySpan<byte> data, ulong offset) {

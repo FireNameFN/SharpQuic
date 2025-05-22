@@ -59,7 +59,7 @@ public sealed class QuicStream {
 
             sentMaxData = inputStream.MaxData;
 
-            return SendMaxData().AsTask();
+            return SendMaxStreamData().AsTask();
         };
     }
 
@@ -176,7 +176,7 @@ public sealed class QuicStream {
         packets.Remove(number, out PacketInfo info);
 
         if(!info.Data)
-            return SendMaxData();
+            return SendMaxStreamData();
 
         return SendStreamAsync(info.Offset, info.Length, info.Fin);
     }
@@ -201,7 +201,7 @@ public sealed class QuicStream {
         return connection.SendAsync(packetWriter);
     }
 
-    ValueTask<int> SendMaxData() {
+    ValueTask<int> SendMaxStreamData() {
         frameWriter.WriteMaxStreamData(Id, inputStream.MaxData);
 
         frameWriter.WritePaddingUntil(20);
@@ -216,7 +216,7 @@ public sealed class QuicStream {
     }
 
     void CheckClosed() {
-        if(closed && peerClosed && inputStream.Offset >= offset && outputStream.Offset >= offset)
+        if(closed && peerClosed && inputStream.Empty && outputStream.Offset >= offset)
             connection.StreamClosed(Id);
     }
 

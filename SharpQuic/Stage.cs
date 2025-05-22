@@ -331,9 +331,9 @@ public sealed class Stage {
 
         FrameWriter.WritePaddingUntil(20);
 
-        uint number = GetNextPacketNumber(false);
+        uint number = GetNextPacketNumber(true);
 
-        packets.Add(number, new(PacketInfoType.Ack, PacketType.OneRtt, [..acks], 0, 0, 0, null));
+        packets.Add(number, new(PacketInfoType.MaxStreams, PacketType.OneRtt, null, 0, 0, 0, null));
 
         packetWriter.Write(PacketType.OneRtt, number, FrameWriter.ToPayload());
     }
