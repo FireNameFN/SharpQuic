@@ -188,6 +188,8 @@ public sealed class Stage {
 
         int count = inFlightPackets.Count;
 
+        bool writeAck = false;
+
         for(int i = 0; i < count; i++) {
             InFlightPacket packet = inFlightPackets[i];
 
@@ -203,6 +205,13 @@ public sealed class Stage {
 
             i--;
             count--;
+        }
+
+
+        if(writeAck) {
+            WriteAck(packetWriter, true);
+
+            await connection.SendAsync(packetWriter);
         }
 
         ValueTask<int> PacketLostAsync(uint number) {
@@ -230,9 +239,9 @@ public sealed class Stage {
             else if(packet.Type == PacketInfoType.MaxStreams)
                 WriteMaxStreams(packetWriter);
             
-            WriteAck(packetWriter, true);
+            writeAck = true;
 
-            return ValueTask.FromResult(0);
+            return connection.SendAsync(packetWriter);
         }
     }
 
@@ -349,7 +358,7 @@ public sealed class Stage {
         }
 
         if(acks.Count > 0) {
-            FrameWriter.WriteAck([..acks]);
+            FrameWriter.WriteAck([..acks.ToArray()]);
         
             ackEliciting = false;
         }

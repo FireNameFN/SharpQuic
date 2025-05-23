@@ -12,7 +12,7 @@ namespace SharpQuic.Tests;
 public class QuicStreamTests {
     [Test, Explicit]
     public async Task QuicStreamTestAsync() {
-        CancellationTokenSource timeoutSource = new(2000);
+        CancellationTokenSource timeoutSource = new(20000);
 
         byte[] data = new byte[8192];
 
@@ -38,8 +38,6 @@ public class QuicStreamTests {
 
                 await stream.WriteAsync(data, true);
 
-                await stream.FlushAsync();
-
                 source.SetResult();
             } catch(Exception e) {
                 source.SetException(e);
@@ -55,7 +53,9 @@ public class QuicStreamTests {
             Protocols = ["test"],
             CertificateChain = [certificate],
             CancellationToken = timeoutSource.Token,
-            DebugLogging = true
+            DebugLogging = true,
+            DebugInputPacketLoss = 0.4,
+            DebugOutputPacketLoss = 0.4
         });
 
         /*server.OnStream += stream => {

@@ -224,7 +224,8 @@ public sealed class QuicConnection : IAsyncDisposable {
     }
 
     internal void StreamPacketAck(uint number, ulong streamId) {
-        streams[streamId].PacketAck(packetWriter, number);
+        if(streams.TryGetValue(streamId, out QuicStream stream))
+            stream.PacketAck(packetWriter, number);
     }
 
     internal async Task ReceiveAsync(IPEndPoint point, byte[] data, int length) {

@@ -234,7 +234,10 @@ public sealed class QuicStream {
             Connection.StreamClosed(packetWriter, Id);
     }
 
-    internal void Dispose() {
+    internal void Dispose() {   
+        if(Connection.debugLogging)
+            Console.WriteLine($"STREAM {Id} DISPOSE");
+
         inputStream.Dispose();
 
         maxDataSemaphore.Dispose();

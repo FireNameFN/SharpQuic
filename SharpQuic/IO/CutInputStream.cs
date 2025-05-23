@@ -80,6 +80,9 @@ public sealed class CutInputStream(int bufferLength) : IDisposable {
         while(memoryOffset < memory.Length) {
             await readSemaphore.WaitAsync(cancellationToken);
 
+            if(regions[0].Min > Offset) // TODO why?
+                continue;
+
             await semaphore.WaitAsync(cancellationToken);
 
             int length = Math.Min(memory.Length - memoryOffset, (int)(regions[0].Max - Offset));
