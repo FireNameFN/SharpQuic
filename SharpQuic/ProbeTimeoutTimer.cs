@@ -14,8 +14,8 @@ public sealed class ProbeTimeoutTimer {
         packetWriter = new(connection);
     }
 
-    public Task StartAsync() {
-        return Task.Factory.StartNew(Runner, TaskCreationOptions.LongRunning);
+    public void Start() {
+        Task.Run(Runner);
     }
 
     async Task Runner() {

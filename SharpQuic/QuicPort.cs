@@ -77,37 +77,41 @@ internal static class QuicPort {
         IPEndPoint point = new(IPAddress.Any, 0);
 
         while(true) {
-            SocketReceiveFromResult result = await socket.ReceiveFromAsync(data, point);
+            try {
+                SocketReceiveFromResult result = await socket.ReceiveFromAsync(data, point);
 
-            Memory<byte> id;
+                Memory<byte> id;
 
-            if((data[0] & 0b10000000) != 0)
-                id = data.AsMemory().Slice(6, 20);
-            else
-                id = data.AsMemory().Slice(1, 20);
+                if((data[0] & 0b10000000) != 0)
+                    id = data.AsMemory().Slice(6, 20);
+                else
+                    id = data.AsMemory().Slice(1, 20);
 
-            await semaphore.WaitAsync();
+                await semaphore.WaitAsync();
 
-            bool received = false;
+                bool received = false;
 
-            foreach(QuicConnection connection in connections) {
-                if(!connection.sourceConnectionId.AsSpan().SequenceEqual(id.Span[..connection.sourceConnectionId.Length]))
-                    continue;
+                foreach(QuicConnection connection in connections) {
+                    if(!connection.sourceConnectionId.AsSpan().SequenceEqual(id.Span[..connection.sourceConnectionId.Length]))
+                        continue;
 
-                await connection.ReceiveAsync((IPEndPoint)result.RemoteEndPoint, data, result.ReceivedBytes);
+                    await connection.ReceiveAsync((IPEndPoint)result.RemoteEndPoint, data, result.ReceivedBytes);
 
-                received = true;
+                    received = true;
 
-                break;
+                    break;
+                }
+
+                if(!received && listeners.Count > 0) {
+                    await listeners[0].ReceiveAsync((IPEndPoint)result.RemoteEndPoint, data, result.ReceivedBytes);
+
+                    listeners.RemoveAt(0);
+                }
+
+                semaphore.Release();
+            } catch(Exception e) {
+                Console.WriteLine(e);
             }
-
-            if(!received && listeners.Count > 0) {
-                await listeners[0].ReceiveAsync((IPEndPoint)result.RemoteEndPoint, data, result.ReceivedBytes);
-
-                listeners.RemoveAt(0);
-            }
-
-            semaphore.Release();
         }
     }
 }

@@ -129,7 +129,7 @@ public sealed class QuicConnection : IAsyncDisposable {
         if(configuration.LocalPoint is null)
             await QuicPort.SubscribeAsync(connection, (IPEndPoint)connection.socket.LocalEndPoint, connection.socket);
 
-        await connection.timer.StartAsync();
+        connection.timer.Start();
 
         await connection.ready.Task.WaitAsync(configuration.CancellationToken);
 
@@ -426,7 +426,7 @@ public sealed class QuicConnection : IAsyncDisposable {
             if(endpointType == EndpointType.Server) {
                 initialStage.CalculateProbeTimeout();
 
-                await timer.StartAsync();
+                timer.Start();
 
                 peerParameters = tlsClient.PeerParameters;
 
