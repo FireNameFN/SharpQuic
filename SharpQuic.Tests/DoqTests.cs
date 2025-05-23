@@ -17,7 +17,7 @@ public class DoqTests {
         IPHostEntry entry = await Dns.GetHostEntryAsync("dns.adguard-dns.com");
         
         QuicConnection connection = await QuicConnection.ConnectAsync(new() {
-            Point = new(entry.AddressList[0], 853),
+            RemotePoint = new(entry.AddressList[0], 853),
             Protocols = ["doq"],
             CancellationToken = source.Token,
             DebugInputPacketLoss = 0.25,
@@ -73,7 +73,7 @@ public class DoqTests {
     [Test, Explicit]
     public async Task ConnectToLocalDoqTestAsync() {
         QuicConnection connection = await QuicConnection.ConnectAsync(new() {
-            Point = IPEndPoint.Parse("127.0.0.1:853"),
+            RemotePoint = IPEndPoint.Parse("127.0.0.1:853"),
             Protocols = ["doq"]
         });
 

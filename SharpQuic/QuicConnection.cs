@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -16,8 +15,8 @@ using SharpQuic.Tls.Enums;
 
 namespace SharpQuic;
 
-public sealed class QuicConnection : IDisposable {
-    internal readonly Socket socket;
+public sealed class QuicConnection : IAsyncDisposable {
+    internal Socket socket;
 
     readonly TlsClient tlsClient;
 
@@ -45,8 +44,6 @@ public sealed class QuicConnection : IDisposable {
 
     readonly TaskCompletionSource ready = new();
 
-    readonly CancellationToken handshakeToken;
-
     internal readonly CancellationTokenSource connectionSource;
 
     readonly Channel<QuicStream> channel = Channel.CreateUnbounded<QuicStream>(new() { SingleReader = true, SingleWriter = true });
@@ -55,7 +52,9 @@ public sealed class QuicConnection : IDisposable {
 
     readonly double debugOutputPacketLoss;
 
-    public IPEndPoint Point { get; internal set; }
+    public IPEndPoint LocalPoint { get; private set; }
+
+    public IPEndPoint RemotePoint { get; internal set; }
 
     public string Protocol { get; private set; }
 
@@ -79,8 +78,7 @@ public sealed class QuicConnection : IDisposable {
 
     readonly Dictionary<ulong, QuicStream> streams = [];
 
-    internal QuicConnection(Socket socket, EndpointType endpointType, QuicConfiguration configuration) {
-        this.socket = socket;
+    internal QuicConnection(EndpointType endpointType, QuicConfiguration configuration) {
         this.endpointType = endpointType;
         protection = new(endpointType, configuration.Parameters.InitialSourceConnectionId);
 
@@ -93,10 +91,8 @@ public sealed class QuicConnection : IDisposable {
         };
 
         tlsClient = new(configuration.Parameters, configuration.Protocols, configuration.CertificateChain, configuration.ChainPolicy);
-        
-        handshakeToken = configuration.CancellationToken;
 
-        connectionSource = CancellationTokenSource.CreateLinkedTokenSource(configuration.CancellationToken);
+        connectionSource = new();
 
         timer = new(this);
 
@@ -113,19 +109,25 @@ public sealed class QuicConnection : IDisposable {
     public static async Task<QuicConnection> ConnectAsync(QuicConfiguration configuration) {
         configuration.Parameters.InitialSourceConnectionId = RandomNumberGenerator.GetBytes(8);
 
-        QuicConnection connection = new(new(SocketType.Dgram, ProtocolType.Udp), EndpointType.Client, configuration);
+        QuicConnection connection = new(EndpointType.Client, configuration) {
+            RemotePoint = configuration.RemotePoint
+        };
 
-        connection.socket.Connect(configuration.Point);
-
-        connection.Point = configuration.Point;
+        if(configuration.LocalPoint is not null)
+            await QuicPort.SubscribeAsync(connection, configuration.LocalPoint, false);
+        else
+            connection.socket = new(SocketType.Dgram, ProtocolType.Udp);
 
         await connection.SendClientHelloAsync();
 
-        await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
+        connection.LocalPoint = (IPEndPoint)connection.socket.LocalEndPoint;
+
+        if(configuration.LocalPoint is null)
+            await QuicPort.SubscribeAsync(connection, (IPEndPoint)connection.socket.LocalEndPoint, connection.socket);
 
         await connection.timer.StartAsync();
 
-        await connection.ready.Task;
+        await connection.ready.Task.WaitAsync(configuration.CancellationToken);
 
         return connection;
     }
@@ -133,21 +135,19 @@ public sealed class QuicConnection : IDisposable {
     public static async Task<QuicConnection> ListenAsync(QuicConfiguration configuration) {
         configuration.Parameters.InitialSourceConnectionId = RandomNumberGenerator.GetBytes(8);
 
-        QuicConnection connection = new(new(SocketType.Dgram, ProtocolType.Udp), EndpointType.Server, configuration);
+        QuicConnection connection = new(EndpointType.Server, configuration) {
+            LocalPoint = configuration.LocalPoint
+        };
 
-        connection.socket.Bind(configuration.Point);
+        await QuicPort.SubscribeAsync(connection, configuration.LocalPoint, true);
 
-        connection.Point = configuration.Point;
-
-        await Task.Factory.StartNew(connection.RunnerAsync, TaskCreationOptions.LongRunning);
-
-        await connection.ready.Task;
+        await connection.ready.Task.WaitAsync(configuration.CancellationToken);
 
         return connection;
     }
 
     public async Task<QuicStream> OpenBidirectionalStream() {
-        await openBidirectionalStreamSemaphore.WaitAsync();
+        await openBidirectionalStreamSemaphore.WaitAsync(connectionSource.Token);
 
         ulong id = nextBidirectionalStreamId++;
 
@@ -159,7 +159,7 @@ public sealed class QuicConnection : IDisposable {
     }
 
     public async Task<QuicStream> OpenUnidirectionalStream() {
-        await openUnidirectionalStreamSemaphore.WaitAsync();
+        await openUnidirectionalStreamSemaphore.WaitAsync(connectionSource.Token);
 
         ulong id = nextUnidirectionalStreamId++;
 
@@ -194,7 +194,7 @@ public sealed class QuicConnection : IDisposable {
 
         Memory<byte> datagram = packetWriter.ToDatagram();
 
-        if(Random.Shared.NextDouble() < debugOutputPacketLoss) {
+        if(socket.LocalEndPoint is not null && Random.Shared.NextDouble() < debugOutputPacketLoss) {
             Console.WriteLine($"Losing datagram: {datagram.Length}");
             
             return ValueTask.FromResult(0);
@@ -202,7 +202,7 @@ public sealed class QuicConnection : IDisposable {
 
         Console.WriteLine($"Sending datagram: {datagram.Length}");
 
-        return socket.SendAsync(datagram);
+        return socket.SendToAsync(datagram, RemotePoint);
     }
 
     internal ValueTask<int> FlushAsync() {
@@ -221,38 +221,7 @@ public sealed class QuicConnection : IDisposable {
         streams[streamId].PacketAck(packetWriter, number);
     }
 
-    async Task RunnerAsync() {
-        try {
-            byte[] buffer = new byte[1500];
-
-            long time = Stopwatch.GetTimestamp();
-
-            while(true) {
-                Console.WriteLine("Weh receiving");
-
-                SocketReceiveFromResult result = await socket.ReceiveFromAsync(buffer, Point, state != State.Idle ? handshakeToken : connectionSource.Token);
-
-                Console.WriteLine($"Time: {(Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency}");
-
-                if(state == State.Initial && endpointType == EndpointType.Server) {
-                    Console.WriteLine($"Connect to: {result.RemoteEndPoint}");
-                    socket.Connect(result.RemoteEndPoint);
-                    Point = (IPEndPoint)result.RemoteEndPoint;
-                }
-
-                await ReceiveAsync(buffer, result.ReceivedBytes);
-            }
-        } catch(Exception e) {
-            Console.WriteLine(e);
-
-            connectionSource.Cancel();
-
-            if(!ready.Task.IsCompleted)
-                ready.SetException(e);
-        }
-    }
-
-    internal async Task ReceiveAsync(byte[] data, int length) {
+    internal async Task ReceiveAsync(IPEndPoint point, byte[] data, int length) {
         if(Random.Shared.NextDouble() < debugInputPacketLoss) {
             Console.WriteLine($"Losed datagram: {length}");
             return;
@@ -270,6 +239,11 @@ public sealed class QuicConnection : IDisposable {
             if(packet is null) {
                 Console.WriteLine("Invalid packet");
                 return;
+            }
+
+            if(state == State.Initial && endpointType == EndpointType.Server) {
+                Console.WriteLine($"Connect to: {point}");
+                RemotePoint = point;
             }
 
             if(packet is not RetryPacket) {
@@ -523,14 +497,14 @@ public sealed class QuicConnection : IDisposable {
         await FlushAsync();
     }
 
-    public void Dispose() {
+    public async ValueTask DisposeAsync() {
         connectionSource.Cancel();
         connectionSource.Dispose();
 
         openBidirectionalStreamSemaphore.Dispose();
         openUnidirectionalStreamSemaphore.Dispose();
 
-        socket.Dispose();
+        await QuicPort.UnsubscribeAsync(this);
 
         foreach(QuicStream stream in streams.Values)
             stream.Dispose();

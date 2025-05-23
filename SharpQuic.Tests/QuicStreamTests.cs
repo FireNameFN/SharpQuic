@@ -25,7 +25,7 @@ public class QuicStreamTests {
         _ = Task.Run(async () => {
             try {
                 client = await QuicConnection.ConnectAsync(new() {
-                    Point = IPEndPoint.Parse("127.0.0.1:50000"),
+                    RemotePoint = IPEndPoint.Parse("127.0.0.1:50000"),
                     Protocols = ["test"],
                     ChainPolicy = new() {
                         VerificationFlags = X509VerificationFlags.AllFlags
@@ -50,7 +50,7 @@ public class QuicStreamTests {
         X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
 
         QuicConnection server = await QuicConnection.ListenAsync(new() {
-            Point = IPEndPoint.Parse("0.0.0.0:50000"),
+            LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
             CertificateChain = [certificate],
             CancellationToken = timeoutSource.Token

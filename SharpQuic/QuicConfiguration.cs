@@ -5,7 +5,9 @@ using System.Threading;
 namespace SharpQuic;
 
 public readonly struct QuicConfiguration() {
-    public IPEndPoint Point { get; init; }
+    public IPEndPoint LocalPoint { get; init; }
+
+    public IPEndPoint RemotePoint { get; init; }
 
     public string[] Protocols { get; init; }
 
