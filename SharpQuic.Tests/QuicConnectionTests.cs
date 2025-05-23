@@ -176,6 +176,80 @@ public class QuicConnectionTests {
     }
 
     [Test, Explicit]
+    public async Task QuicDoubleConnectionFromOnePointTestAsync() {
+        CancellationTokenSource timeoutSource = new(1500);
+
+        CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+
+        X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
+
+        TaskCompletionSource source3 = new();
+
+        _ = Task.Run(async () => {
+            try {
+                QuicConnection client = await QuicConnection.ListenAsync(new() {
+                    LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
+                    Protocols = ["test"],
+                    CertificateChain = [certificate],
+                    CancellationToken = timeoutSource.Token
+                });
+
+                source3.SetResult();
+            } catch(Exception e) {
+                source3.SetException(e);
+            }
+        });
+
+        TaskCompletionSource source4 = new();
+
+        _ = Task.Run(async () => {
+            try {
+                QuicConnection client = await QuicConnection.ListenAsync(new() {
+                    LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
+                    Protocols = ["test"],
+                    CertificateChain = [certificate],
+                    CancellationToken = timeoutSource.Token
+                });
+
+                source4.SetResult();
+            } catch(Exception e) {
+                source4.SetException(e);
+            }
+        });
+
+        QuicConnection client = await QuicConnection.ConnectAsync(new() {
+            RemotePoint = IPEndPoint.Parse("127.0.0.1:50000"),
+            Protocols = ["test"],
+            ChainPolicy = new() {
+                TrustMode = X509ChainTrustMode.CustomRootTrust,
+                RevocationMode = X509RevocationMode.NoCheck,
+                CustomTrustStore = {
+                    certificate
+                }
+            },
+            CancellationToken = timeoutSource.Token
+        });
+
+        QuicConnection client2 = await QuicConnection.ConnectAsync(new() {
+            LocalPoint = client.LocalPoint,
+            RemotePoint = IPEndPoint.Parse("127.0.0.1:50000"),
+            Protocols = ["test"],
+            ChainPolicy = new() {
+                TrustMode = X509ChainTrustMode.CustomRootTrust,
+                RevocationMode = X509RevocationMode.NoCheck,
+                CustomTrustStore = {
+                    certificate
+                }
+            },
+            CancellationToken = timeoutSource.Token
+        });
+
+        await source3.Task;
+
+        await source4.Task;
+    }
+
+    [Test, Explicit]
     public async Task ConnectToExternalServerTestAsync() {
         await QuicConnection.ConnectAsync(new() {
             RemotePoint = IPEndPoint.Parse("127.0.0.1:853"),

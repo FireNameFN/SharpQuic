@@ -19,6 +19,8 @@ public readonly struct QuicConfiguration() {
 
     public CancellationToken CancellationToken { get; init; }
 
+    public bool DebugLogging { get; init; }
+
     public double DebugInputPacketLoss { get; init; }
 
     public double DebugOutputPacketLoss { get; init; }

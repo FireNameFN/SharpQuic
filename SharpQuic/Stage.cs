@@ -86,7 +86,8 @@ public sealed class Stage {
         }
 
         void RemoveInFlightPacket(int index) {
-            Console.WriteLine($"Confirmed: {inFlightPackets[index].Number}");
+            if(connection.debugLogging)
+                Console.WriteLine($"Confirmed: {inFlightPackets[index].Number}");
 
             ackEliciting |= inFlightPackets[index].AckEliciting;
 
@@ -172,10 +173,12 @@ public sealed class Stage {
 
                 rttVar = (3 * rttVar + rttVarSample) / 4;
 
-                Console.WriteLine($"Latest RTT: {latestRtt}");
-                Console.WriteLine($"Min RTT: {minRtt}");
-                Console.WriteLine($"Smoothed RTT: {smoothedRtt}");
-                Console.WriteLine($"RTT Var: {rttVar}");
+                if(connection.debugLogging) {
+                    Console.WriteLine($"Latest RTT: {latestRtt}");
+                    Console.WriteLine($"Min RTT: {minRtt}");
+                    Console.WriteLine($"Smoothed RTT: {smoothedRtt}");
+                    Console.WriteLine($"RTT Var: {rttVar}");
+                }
             }
         }
 
@@ -214,7 +217,8 @@ public sealed class Stage {
 
             bool exists = packets.Remove(number, out PacketInfo packet);
 
-            Console.WriteLine($"{stage}: Packet lost: {number} that {(exists ? "exists" : "doesn't exists")}");
+            if(connection.debugLogging)
+                Console.WriteLine($"{stage}: Packet lost: {number} that {(exists ? "exists" : "doesn't exists")}");
 
             if(packet.Type == PacketInfoType.Stream)
                 return connection.StreamPacketLostAsync(number, packet.StreamId);
@@ -235,7 +239,8 @@ public sealed class Stage {
     public uint GetNextPacketNumber(bool ackEliciting) {
         uint number = Interlocked.Increment(ref nextPacketNumber);
 
-        Console.WriteLine($"{type}: Packet number {number}");
+        if(connection.debugLogging)
+            Console.WriteLine($"{type}: Packet number {number}");
 
         inFlightPackets.Add(new(number, ackEliciting, Stopwatch.GetTimestamp()));
 
@@ -286,7 +291,8 @@ public sealed class Stage {
 
         uint number = GetNextPacketNumber(true);
 
-        Console.WriteLine($"Crypto {type}");
+        if(connection.debugLogging)
+            Console.WriteLine($"Crypto {type}");
 
         PacketType packetType = type switch {
             StageType.Initial => PacketType.Initial,
@@ -343,7 +349,7 @@ public sealed class Stage {
         }
 
         if(acks.Count > 0) {
-            FrameWriter.WriteAck(acks);
+            FrameWriter.WriteAck([..acks]);
         
             ackEliciting = false;
         }
@@ -354,7 +360,8 @@ public sealed class Stage {
 
         uint number = GetNextPacketNumber(true);
 
-        Console.WriteLine($"Probe {type}");
+        if(connection.debugLogging)
+            Console.WriteLine($"Probe {type}");
 
         PacketType packetType = type switch {
             StageType.Initial => PacketType.Initial,
@@ -389,7 +396,8 @@ public sealed class Stage {
         if(!ProbeTimeoutEnabled)
             ProbeTimeout = long.MaxValue;
 
-        Console.WriteLine(smoothedRtt + Math.Max(rttVar * 4, Granularity) + (type == StageType.Application ? MaxAckDelay : 0));
+        if(connection.debugLogging)
+            Console.WriteLine(smoothedRtt + Math.Max(rttVar * 4, Granularity) + (type == StageType.Application ? MaxAckDelay : 0));
 
         ProbeTimeout = (Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency) + smoothedRtt + Math.Max(rttVar * 4, Granularity) + (type == StageType.Application ? MaxAckDelay : 0);
     }

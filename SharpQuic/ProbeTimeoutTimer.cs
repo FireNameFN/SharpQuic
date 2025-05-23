@@ -25,11 +25,14 @@ public sealed class ProbeTimeoutTimer {
             while(!connection.connectionSource.IsCancellationRequested) {
                 long next = Math.Min(connection.initialStage?.ProbeTimeout ?? long.MaxValue, Math.Min(connection.handshakeStage?.ProbeTimeout ?? long.MaxValue, connection.applicationStage?.ProbeTimeout ?? long.MaxValue));
 
-                Console.WriteLine($"Initial: {connection.initialStage?.ProbeTimeout}. Handshake: {connection.handshakeStage?.ProbeTimeout}. Application: {connection.applicationStage?.ProbeTimeout}");
-                Console.WriteLine($"Min: {min}. Next: {next}");
+                if(connection.debugLogging) {
+                    Console.WriteLine($"Initial: {connection.initialStage?.ProbeTimeout}. Handshake: {connection.handshakeStage?.ProbeTimeout}. Application: {connection.applicationStage?.ProbeTimeout}");
+                    Console.WriteLine($"Min: {min}. Next: {next}");
+                }
 
                 if(next <= min) {
-                    Console.WriteLine("Probe");
+                    if(connection.debugLogging)
+                        Console.WriteLine("Probe");
 
                     if(connection.initialStage?.ProbeTimeout <= min)
                         connection.initialStage.WriteProbe(packetWriter);
@@ -44,12 +47,14 @@ public sealed class ProbeTimeoutTimer {
                 } else {
                     int time = (int)(next - Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency);
 
-                    Console.WriteLine($"Sleeping {time}");
+                    if(connection.debugLogging)
+                        Console.WriteLine($"Sleeping {time}");
 
                     if(time > 0)
                         await Task.Delay(time);
 
-                    Console.WriteLine("Timer");
+                    if(connection.debugLogging)
+                        Console.WriteLine("Timer");
                 }
 
                 min = next;

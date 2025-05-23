@@ -82,7 +82,7 @@ public sealed class CutInputStream(int bufferLength) : IDisposable {
 
             await semaphore.WaitAsync(cancellationToken);
 
-            int length = Math.Min(memory.Length, (int)(regions[0].Max - Offset));
+            int length = Math.Min(memory.Length - memoryOffset, (int)(regions[0].Max - Offset));
 
             buffer[..length].CopyTo(memory[memoryOffset..]);
 

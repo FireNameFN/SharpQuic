@@ -301,7 +301,7 @@ public sealed class TlsClient {
         if(State != TlsState.Start)
             throw new QuicException();
 
-        if(message.CipherSuites.Contains(CipherSuite.ChaCha20Poly1305Sha256))
+        if(ChaCha20Poly1305.IsSupported && message.CipherSuites.Contains(CipherSuite.ChaCha20Poly1305Sha256))
             CipherSuite = CipherSuite.ChaCha20Poly1305Sha256;
         else if(message.CipherSuites.Contains(CipherSuite.Aes256GcmSHA384))
             CipherSuite = CipherSuite.Aes256GcmSHA384;

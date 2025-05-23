@@ -110,7 +110,8 @@ public sealed class QuicStream {
                 await maxDataSemaphore.WaitAsync(Connection.connectionSource.Token);
         }
 
-        Console.WriteLine($"Stream Write {data.Length}");
+        if(Connection.debugLogging)
+            Console.WriteLine($"Stream Write {data.Length}");
     }
 
     public ValueTask<int> FlushAsync(bool close = false) {
@@ -160,7 +161,8 @@ public sealed class QuicStream {
 
         peerMaxData = maxStreamData;
 
-        Console.WriteLine($"READ MAXDATA TO {maxStreamData}");
+        if(Connection.debugLogging)
+            Console.WriteLine($"READ MAXDATA TO {maxStreamData}");
 
         if(maxDataSemaphore.CurrentCount < 1)
             maxDataSemaphore.Release();
@@ -172,7 +174,8 @@ public sealed class QuicStream {
         if(!packet.Data)
             return;
 
-        Console.WriteLine($"STREAM CONFIRM {number}");
+        if(Connection.debugLogging)
+            Console.WriteLine($"STREAM CONFIRM {number}");
 
         outputStream.Confirm(packet.Offset, (ulong)packet.Length);
 
@@ -198,7 +201,8 @@ public sealed class QuicStream {
 
         frameWriter.WriteStream(data, Id, offset, fin);
 
-        Console.WriteLine($"WRITE STREAM TO {offset + (ulong)length}");
+        if(Connection.debugLogging)
+            Console.WriteLine($"WRITE STREAM TO {offset + (ulong)length}");
 
         frameWriter.WritePaddingUntil(20);
 

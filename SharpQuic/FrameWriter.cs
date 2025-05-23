@@ -34,8 +34,8 @@ public sealed class FrameWriter {
     }
 
     public void WriteAck(SortedSet<uint> acks) {
-        foreach(uint ack in acks)
-            Console.WriteLine($"ACK {ack}");
+        //foreach(uint ack in acks)
+        //    Console.WriteLine($"ACK {ack}");
 
         List<(uint Gap, uint Length)> ranges = [];
 

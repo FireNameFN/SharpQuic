@@ -30,7 +30,8 @@ public class QuicStreamTests {
                     ChainPolicy = new() {
                         VerificationFlags = X509VerificationFlags.AllFlags
                     },
-                    CancellationToken = timeoutSource.Token
+                    CancellationToken = timeoutSource.Token,
+                    DebugLogging = true
                 });
 
                 QuicStream stream = await client.OpenUnidirectionalStream();
@@ -53,7 +54,8 @@ public class QuicStreamTests {
             LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
             CertificateChain = [certificate],
-            CancellationToken = timeoutSource.Token
+            CancellationToken = timeoutSource.Token,
+            DebugLogging = true
         });
 
         /*server.OnStream += stream => {

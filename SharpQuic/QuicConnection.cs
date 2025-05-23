@@ -48,6 +48,8 @@ public sealed class QuicConnection : IAsyncDisposable {
 
     readonly Channel<QuicStream> channel = Channel.CreateUnbounded<QuicStream>(new() { SingleReader = true, SingleWriter = true });
 
+    internal readonly bool debugLogging;
+
     readonly double debugInputPacketLoss;
 
     readonly double debugOutputPacketLoss;
@@ -98,6 +100,8 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         sourceConnectionId = configuration.Parameters.InitialSourceConnectionId;
         destinationConnectionId = RandomNumberGenerator.GetBytes(8);
+
+        debugLogging = configuration.DebugLogging;
 
         debugInputPacketLoss = configuration.DebugInputPacketLoss;
         debugOutputPacketLoss = configuration.DebugOutputPacketLoss;
@@ -195,12 +199,14 @@ public sealed class QuicConnection : IAsyncDisposable {
         Memory<byte> datagram = packetWriter.ToDatagram();
 
         if(socket.LocalEndPoint is not null && Random.Shared.NextDouble() < debugOutputPacketLoss) {
-            Console.WriteLine($"Losing datagram: {datagram.Length}");
+            if(debugLogging)
+                Console.WriteLine($"Losing datagram: {datagram.Length}");
             
             return ValueTask.FromResult(0);
         }
 
-        Console.WriteLine($"Sending datagram: {datagram.Length}");
+        if(debugLogging)
+            Console.WriteLine($"Sending datagram: {datagram.Length}");
 
         return socket.SendToAsync(datagram, RemotePoint);
     }
@@ -223,31 +229,37 @@ public sealed class QuicConnection : IAsyncDisposable {
 
     internal async Task ReceiveAsync(IPEndPoint point, byte[] data, int length) {
         if(Random.Shared.NextDouble() < debugInputPacketLoss) {
-            Console.WriteLine($"Losed datagram: {length}");
+            if(debugLogging)
+                Console.WriteLine($"Losed datagram: {length}");
             return;
         }
 
-        Console.WriteLine($"Received datagram: {length}");
+        if(debugLogging)
+            Console.WriteLine($"Received datagram: {length}");
 
         MemoryStream stream = new(data, 0, length);
 
         while(stream.Position < stream.Length) {
-            Console.WriteLine("Unprotecting");
+            if(debugLogging)
+                Console.WriteLine("Unprotecting");
 
             Packet packet = protection.Unprotect(stream, initialStage?.KeySet, handshakeStage?.KeySet, applicationStage?.KeySet);
 
             if(packet is null) {
-                Console.WriteLine("Invalid packet");
+                if(debugLogging)
+                    Console.WriteLine("Invalid packet");
                 return;
             }
 
             if(state == State.Initial && endpointType == EndpointType.Server) {
-                Console.WriteLine($"Connect to: {point}");
+                if(debugLogging)
+                    Console.WriteLine($"Connect to: {point}");
                 RemotePoint = point;
             }
 
             if(packet is not RetryPacket) {
-                Console.WriteLine($"Unprotected packet: {packet.PacketType} {packet.PacketNumber} {packet.Payload.Length}");
+                if(debugLogging)
+                    Console.WriteLine($"Unprotected packet: {packet.PacketType} {packet.PacketNumber} {packet.Payload.Length}");
 
                 HashSet<uint> received = packet.PacketType switch {
                     PacketType.Initial => initialStage.Received,
@@ -257,11 +269,13 @@ public sealed class QuicConnection : IAsyncDisposable {
                 };
 
                 if(!received.Add(packet.PacketNumber)) {
-                    Console.WriteLine($"Duplicate");
+                    if(debugLogging)
+                        Console.WriteLine($"Duplicate");
                     continue;
                 }
             } else
-                Console.WriteLine($"Retry packet");
+                if(debugLogging)
+                    Console.WriteLine($"Retry packet");
             
             await HandlePacketAsync(packet);
 
@@ -331,7 +345,8 @@ public sealed class QuicConnection : IAsyncDisposable {
 
                     CutInputStreamReader cutStreamReader = new(cryptoStream);
 
-                    Console.WriteLine($"Got CRYPTO to {cryptoFrame.Offset + (ulong)cryptoFrame.Data.Length}. Available to read: {cutStreamReader.Length}");
+                    if(debugLogging)
+                        Console.WriteLine($"Got CRYPTO to {cryptoFrame.Offset + (ulong)cryptoFrame.Data.Length}. Available to read: {cutStreamReader.Length}");
 
                     while(cutStreamReader.Position < cutStreamReader.Length)
                         if(tlsClient.TryReceiveHandshake(cutStreamReader))
@@ -424,17 +439,20 @@ public sealed class QuicConnection : IAsyncDisposable {
 
                 handshakeStage.KeySet.Generate(tlsClient.serverHandshakeSecret, tlsClient.clientHandshakeSecret);
 
-                Console.WriteLine("Generated handshake keys.");
+                if(debugLogging)
+                    Console.WriteLine("Generated handshake keys.");
 
                 await handshakeStage.WriteCryptoAsync(packetWriter, tlsClient.SendServerHandshake());
 
-                Console.WriteLine("Sending server handshake.");
+                if(debugLogging)
+                    Console.WriteLine("Sending server handshake.");
             } else {
                 tlsClient.DeriveHandshakeSecrets();
 
                 handshakeStage.KeySet.Generate(tlsClient.clientHandshakeSecret, tlsClient.serverHandshakeSecret);
 
-                Console.WriteLine("Generated handshake keys.");
+                if(debugLogging)
+                    Console.WriteLine("Generated handshake keys.");
             }
 
             state = State.Handshake;
@@ -477,7 +495,8 @@ public sealed class QuicConnection : IAsyncDisposable {
                 applicationStage.ProbeTimeoutEnabled = true;
             }
 
-            Console.WriteLine("Generated application keys.");
+            if(debugLogging)
+                Console.WriteLine("Generated application keys.");
 
             peerMaxBidirectionalStreams = peerParameters.InitialMaxStreamsBidi;
             peerMaxUnidirectionalStreams = peerParameters.InitialMaxStreamsUni;

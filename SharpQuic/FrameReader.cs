@@ -11,8 +11,8 @@ public sealed class FrameReader {
     public Frame Read() {
         FrameType type = (FrameType)Serializer.ReadVariableLength(stream).Value;
 
-        if(type != 0)
-            Console.WriteLine($"Frame {type}");
+        //if(type != 0)
+        //    Console.WriteLine($"Frame {type}");
 
         return type switch {
             0 => null,
