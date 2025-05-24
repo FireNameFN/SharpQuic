@@ -60,6 +60,66 @@ public class QuicConnectionTests {
     }
 
     [Test, Explicit]
+    public async Task QuicConnectionClientAuthenticationTestAsync() {
+        CancellationTokenSource timeoutSource = new(5000);
+
+        QuicConnection client = null;
+
+        TaskCompletionSource source = new();
+
+        CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+
+        //CertificateRequest request = new("cn=Test CA", ECDsa.Create(), HashAlgorithmName.SHA256);
+
+        X509Certificate2 clientCertificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
+
+        X509Certificate2 serverCertificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
+
+        _ = Task.Run(async () => {
+            try {
+                client = await QuicConnection.ConnectAsync(new() {
+                    RemotePoint = IPEndPoint.Parse("127.0.0.1:50000"),
+                    Protocols = ["test"],
+                    CertificateChain = [clientCertificate],
+                    ChainPolicy = new() {
+                        TrustMode = X509ChainTrustMode.CustomRootTrust,
+                        RevocationMode = X509RevocationMode.NoCheck,
+                        CustomTrustStore = {
+                            serverCertificate
+                        }
+                    },
+                    CancellationToken = timeoutSource.Token
+                });
+
+                source.SetResult();
+            } catch(Exception e) {
+                source.SetException(e);
+            }
+        });
+
+        QuicConnection server = await QuicConnection.ListenAsync(new() {
+            LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
+            Protocols = ["test"],
+            CertificateChain = [serverCertificate],
+            ChainPolicy = new() {
+                TrustMode = X509ChainTrustMode.CustomRootTrust,
+                RevocationMode = X509RevocationMode.NoCheck,
+                CustomTrustStore = {
+                    clientCertificate
+                }
+            },
+            ClientAuthentication = true,
+            CancellationToken = timeoutSource.Token
+        });
+
+        await source.Task;
+
+        Assert.That(client.applicationStage.KeySet.SourceKey.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationKey));
+        Assert.That(client.applicationStage.KeySet.SourceIv.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationIv));
+        Assert.That(client.applicationStage.KeySet.SourceHp.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationHp));
+    }
+
+    [Test, Explicit]
     public async Task QuicDoubleConnectionTestAsync() {
         CancellationTokenSource timeoutSource = new(1500);
 

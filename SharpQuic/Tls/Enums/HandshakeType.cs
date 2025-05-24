@@ -6,6 +6,7 @@ public enum HandshakeType : byte {
     NewSessionTicket = 4,
     EncryptedExtensions = 8,
     Certificate = 11,
+    CertificateRequest = 13,
     CertificateVerify = 15,
     Finished = 20
 }

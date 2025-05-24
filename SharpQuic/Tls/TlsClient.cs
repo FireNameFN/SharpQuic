@@ -23,6 +23,10 @@ public sealed class TlsClient {
 
     public string Protocol { get; private set; }
 
+    public bool ClientAuthenticationRequested { get; private set; }
+
+    bool client;
+
     readonly QuicTransportParameters parameters;
 
     string[] protocols;
@@ -30,6 +34,8 @@ public sealed class TlsClient {
     X509Certificate2[] certificateChain;
 
     X509ChainPolicy chainPolicy;
+
+    bool clientAuthentication;
 
     X509Certificate2[] remoteCertificateChain;
 
@@ -50,11 +56,12 @@ public sealed class TlsClient {
 
     internal byte[] serverApplicationSecret;
 
-    public TlsClient(QuicTransportParameters parameters, string[] protocols, X509Certificate2[] certificateChain = null, X509ChainPolicy chainPolicy = null) {
+    public TlsClient(QuicTransportParameters parameters, string[] protocols, X509Certificate2[] certificateChain = null, X509ChainPolicy chainPolicy = null, bool clientAuthentication = false) {
         this.parameters = parameters;
         this.protocols = protocols;
         this.certificateChain = certificateChain ?? [];
         this.chainPolicy = chainPolicy ?? new();
+        this.clientAuthentication = clientAuthentication;
 
         X25519KeyPairGenerator generator = new();
 
@@ -146,7 +153,9 @@ public sealed class TlsClient {
             Parameters = parameters
         };
 
-        State = TlsState.WaitServerHello;
+        State = TlsState.WaitingServerHello;
+
+        client = true;
 
         return GetHandshake(message);
     }
@@ -180,19 +189,53 @@ public sealed class TlsClient {
 
         stream.Write(GetHandshake(certificateMessage));
 
-        HashAlgorithmName name = HashUtils.GetName(CipherSuite);
-
         if(certificateChain.Length > 0) {
+            HashAlgorithmName name = HashUtils.GetName(CipherSuite);
+
             CertificateVerifyMessage certificateVerifyMessage = CertificateVerifyMessage.Create(EndpointType.Server, GetMessagesHash(name), certificateChain[0]);
 
             stream.Write(GetHandshake(certificateVerifyMessage));
         }
 
+        return stream.ToArray();
+    }
+
+    public byte[] SendCertificateRequest() {
+        CertificateRequestMessage certificateRequestMessage = new();
+
+        State = TlsState.WaitingCertificate;
+
+        return GetHandshake(certificateRequestMessage);
+    }
+
+    public byte[] SendServerFinished() {
+        HashAlgorithmName name = HashUtils.GetName(CipherSuite);
+
         FinishedMessage finishedMessage = FinishedMessage.Create(name, GetMessagesHash(name), serverHandshakeSecret);
 
-        stream.Write(GetHandshake(finishedMessage));
+        State = TlsState.WaitingFinished;
 
-        State = TlsState.WaitClientFinished;
+        return GetHandshake(finishedMessage);
+    }
+
+    public byte[] SendClientCertificate() {
+        MemoryStream stream = new();
+
+        CertificateMessage certificateMessage = new() {
+            CertificateChain = certificateChain
+        };
+
+        stream.Write(GetHandshake(certificateMessage));
+
+        if(certificateChain.Length > 0) {
+            HashAlgorithmName name = HashUtils.GetName(CipherSuite);
+
+            CertificateVerifyMessage certificateVerifyMessage = CertificateVerifyMessage.Create(EndpointType.Server, GetMessagesHash(name), certificateChain[0]);
+
+            stream.Write(GetHandshake(certificateVerifyMessage));
+        }
+
+        State = TlsState.WaitingFinished;
 
         return stream.ToArray();
     }
@@ -269,6 +312,10 @@ public sealed class TlsClient {
                 ReceiveCertificate(CertificateMessage.Decode(stream));
                 Console.WriteLine($"Received Certificate");
                 break;
+            case HandshakeType.CertificateRequest:
+                ReceiveCertificateRequest(CertificateRequestMessage.Decode(stream));
+                Console.WriteLine("Received CertificateRequest");
+                break;
             case HandshakeType.CertificateVerify:
                 ReceiveCertificateVerify(CertificateVerifyMessage.Decode(stream));
                 Console.WriteLine($"Received CertificateVerify");
@@ -281,7 +328,7 @@ public sealed class TlsClient {
                 throw new QuicException();
         }
 
-        if(state == TlsState.WaitClientFinished)
+        if(state == TlsState.WaitingFinished && !client)
             return true;
 
         int handshakeLength = (int)(stream.Position - position);
@@ -320,33 +367,33 @@ public sealed class TlsClient {
         if(Protocol is null)
             throw new QuicException();
 
-        State = TlsState.WaitClientFinished;
+        State = TlsState.WaitingFinished;
     }
 
     void ReceiveServerHello(ServerHelloMessage message) {
-        if(State != TlsState.WaitServerHello)
+        if(State != TlsState.WaitingServerHello)
             throw new QuicException();
 
         CipherSuite = message.CipherSuite;
 
         DeriveKey(message.KeyShare);
 
-        State = TlsState.WaitEncryptedExtensions;
+        State = TlsState.WaitingEncryptedExtensions;
     }
 
     void ReceiveEncryptedExtensions(EncryptedExtensionsMessage message) {
-        if(State != TlsState.WaitEncryptedExtensions)
+        if(State != TlsState.WaitingEncryptedExtensions)
             throw new QuicException();
 
         Protocol = message.Protocol;
 
         PeerParameters = message.Parameters;
 
-        State = TlsState.WaitCertificate;
+        State = TlsState.WaitingCertificate;
     }
 
     void ReceiveCertificate(CertificateMessage message) {
-        if(State != TlsState.WaitCertificate)
+        if(State != TlsState.WaitingCertificate)
             throw new QuicException();
 
         remoteCertificateChain = message.CertificateChain;
@@ -360,26 +407,33 @@ public sealed class TlsClient {
         if(!chain.Build(message.CertificateChain[0]))
             throw new QuicException();
 
-        State = TlsState.WaitCertificateVerify;
+        State = TlsState.WaitingCertificateVerify;
+    }
+
+    void ReceiveCertificateRequest(CertificateRequestMessage message) {
+        if(State != TlsState.WaitingFinishedOrCertificateRequest || !client)
+            throw new QuicException();
+
+        ClientAuthenticationRequested = true;
     }
 
     void ReceiveCertificateVerify(CertificateVerifyMessage message) {
-        if(State != TlsState.WaitCertificateVerify)
+        if(State != TlsState.WaitingCertificateVerify)
             throw new QuicException();
 
         if(!CertificateVerifyMessage.Verify(EndpointType.Server, remoteCertificateChain[0], message.SignatureScheme, message.Signature, GetMessagesHash(HashUtils.GetName(CipherSuite))))
             throw new QuicException();
 
-        State = TlsState.WaitServerFinished;
+        State = TlsState.WaitingFinishedOrCertificateRequest;
     }
 
     void ReceiveFinished(FinishedMessage message) {
-        if(State != TlsState.WaitServerFinished && State != TlsState.WaitClientFinished)
+        if(State != TlsState.WaitingFinishedOrCertificateRequest && State != TlsState.WaitingFinished)
             throw new QuicException();
 
         HashAlgorithmName name = HashUtils.GetName(CipherSuite);
 
-        if(!message.Verify(name, GetMessagesHash(name), State == TlsState.WaitServerFinished ? serverHandshakeSecret : clientHandshakeSecret))
+        if(!message.Verify(name, GetMessagesHash(name), client ? serverHandshakeSecret : clientHandshakeSecret))
             throw new QuicException();
 
         State = TlsState.Connected;
@@ -418,12 +472,12 @@ public sealed class TlsClient {
 
     public enum TlsState {
         Start,
-        WaitServerHello,
-        WaitEncryptedExtensions,
-        WaitCertificate,
-        WaitCertificateVerify,
-        WaitServerFinished,
-        WaitClientFinished,
+        WaitingServerHello,
+        WaitingEncryptedExtensions,
+        WaitingCertificate,
+        WaitingCertificateVerify,
+        WaitingFinishedOrCertificateRequest,
+        WaitingFinished,
         Connected
     }
 }

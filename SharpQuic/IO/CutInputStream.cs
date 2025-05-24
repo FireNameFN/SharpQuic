@@ -26,14 +26,16 @@ public sealed class CutInputStream(int bufferLength) : IDisposable {
 
     public event Func<Task> MaxDataIncreased;
 
-    public void Write(ReadOnlySpan<byte> data, ulong offset) {
-        semaphore.Wait();
+    public async Task WriteAsync(ReadOnlyMemory<byte> data, ulong offset) {
+        await semaphore.WaitAsync();
 
         if(offset < Offset) {
             int length = (int)(Offset - offset);
 
-            if(data.Length < length)
+            if(data.Length < length) {
+                semaphore.Release();
                 return;
+            }
 
             data = data[length..];
 
@@ -43,7 +45,7 @@ public sealed class CutInputStream(int bufferLength) : IDisposable {
         if(Offset + (ulong)buffer.Length < offset + (ulong)data.Length)
             throw new OverflowException();
 
-        data.CopyTo(buffer.AsSpan()[(int)(offset - Offset)..]);
+        data.Span.CopyTo(buffer.AsSpan()[(int)(offset - Offset)..]);
 
         (ulong, ulong) region = new(offset, offset + (ulong)data.Length);
 
@@ -68,7 +70,7 @@ public sealed class CutInputStream(int bufferLength) : IDisposable {
                 i--;
             }
 
-        if(regions[0].Min == offset && readSemaphore.CurrentCount < 1)
+        if(regions[0].Min <= offset && readSemaphore.CurrentCount < 1)
             readSemaphore.Release();
 
         semaphore.Release();
@@ -80,7 +82,7 @@ public sealed class CutInputStream(int bufferLength) : IDisposable {
         while(memoryOffset < memory.Length) {
             await readSemaphore.WaitAsync(cancellationToken);
 
-            if(regions[0].Min > Offset) // TODO why?
+            if(regions[0].Min > Offset)
                 continue;
 
             await semaphore.WaitAsync(cancellationToken);
@@ -92,6 +94,8 @@ public sealed class CutInputStream(int bufferLength) : IDisposable {
             memoryOffset += length;
 
             Offset += (ulong)length;
+
+            Console.WriteLine(Offset);
 
             buffer.AsSpan()[length..].CopyTo(buffer);
 

@@ -69,7 +69,8 @@ public sealed class Stage {
     }
 
     public void Ack(uint packetNumber, bool ackEliciting) {
-        acks.Add(packetNumber);
+        lock(acks)
+            acks.Add(packetNumber);
 
         this.ackEliciting |= ackEliciting;
     }
@@ -358,7 +359,8 @@ public sealed class Stage {
         }
 
         if(acks.Count > 0) {
-            FrameWriter.WriteAck([..acks.ToArray()]);
+            lock(acks)
+                FrameWriter.WriteAck(acks);
         
             ackEliciting = false;
         }

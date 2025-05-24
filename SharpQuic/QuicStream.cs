@@ -149,8 +149,8 @@ public sealed class QuicStream {
         CheckClosed(packetWriter);
     }
 
-    internal void Put(ReadOnlySpan<byte> data, ulong offset, bool close) {
-        inputStream.Write(data, offset);
+    internal async Task PutAsync(ReadOnlyMemory<byte> data, ulong offset, bool close) {
+        await inputStream.WriteAsync(data, offset);
 
         peerClosed |= close;
     }
@@ -210,7 +210,7 @@ public sealed class QuicStream {
 
         packetWriter.Write(PacketType.OneRtt, number, frameWriter.ToPayload(), null);
 
-        packets.Add(number, new(true, offset, data.Length, fin));
+        packets.Add(number, new(true, offset, length, fin));
 
         return Connection.SendAsync(packetWriter);
     }

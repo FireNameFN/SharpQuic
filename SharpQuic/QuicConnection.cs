@@ -62,6 +62,8 @@ public sealed class QuicConnection : IAsyncDisposable {
 
     internal State state;
 
+    readonly bool clientAuthentication;
+
     ulong nextBidirectionalStreamId;
 
     ulong nextUnidirectionalStreamId;
@@ -94,7 +96,7 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         tlsClient = new(configuration.Parameters, configuration.Protocols, configuration.CertificateChain, configuration.ChainPolicy);
 
-        connectionSource = new();
+        connectionSource = CancellationTokenSource.CreateLinkedTokenSource(configuration.CancellationToken);
 
         timer = new(this);
 
@@ -105,6 +107,8 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         debugInputPacketLoss = configuration.DebugInputPacketLoss;
         debugOutputPacketLoss = configuration.DebugOutputPacketLoss;
+
+        clientAuthentication = configuration.ClientAuthentication;
 
         maxBidirectionalStreams = configuration.Parameters.InitialMaxStreamsBidi;
         maxUnidirectionalStreams = configuration.Parameters.InitialMaxStreamsUni;
@@ -120,7 +124,7 @@ public sealed class QuicConnection : IAsyncDisposable {
         if(configuration.LocalPoint is not null)
             await QuicPort.SubscribeAsync(connection, configuration.LocalPoint, false);
         else
-            connection.socket = new(SocketType.Dgram, ProtocolType.Udp);
+            connection.socket = QuicPort.CreateSocket();
 
         await connection.SendClientHelloAsync();
 
@@ -342,7 +346,7 @@ public sealed class QuicConnection : IAsyncDisposable {
                         _ => throw new QuicException(),
                     };
 
-                    cryptoStream.Write(cryptoFrame.Data, cryptoFrame.Offset);
+                    await cryptoStream.WriteAsync(cryptoFrame.Data, cryptoFrame.Offset);
 
                     CutInputStreamReader cutStreamReader = new(cryptoStream);
 
@@ -365,14 +369,12 @@ public sealed class QuicConnection : IAsyncDisposable {
                         await channel.Writer.WriteAsync(stream, connectionSource.Token);
                     }
 
-                    stream.Put(streamFrame.Data, streamFrame.Offset, streamFrame.Fin);
+                    await stream.PutAsync(streamFrame.Data, streamFrame.Offset, streamFrame.Fin);
 
                     break;
                 case MaxStreamDataFrame maxStreamDataFrame:
-                    if(!streams.TryGetValue(maxStreamDataFrame.Id, out stream))
-                        throw new QuicException();
-
-                    stream.MaxStreamData(maxStreamDataFrame.MaxStreamData);
+                    if(streams.TryGetValue(maxStreamDataFrame.Id, out stream))
+                        stream.MaxStreamData(maxStreamDataFrame.MaxStreamData);
 
                     break;
                 case MaxStreamsFrame maxStreamsFrame:
@@ -417,7 +419,7 @@ public sealed class QuicConnection : IAsyncDisposable {
     }
 
     async Task HandleHandshakeAsync() {
-        if(state == State.Initial && tlsClient.State >= TlsClient.TlsState.WaitEncryptedExtensions) {
+        if(state == State.Initial && tlsClient.State >= TlsClient.TlsState.WaitingEncryptedExtensions) {
             handshakeStage = new(this, StageType.Handshake) {
                 KeySet = new(tlsClient.CipherSuite)
             };
@@ -445,6 +447,11 @@ public sealed class QuicConnection : IAsyncDisposable {
 
                 await handshakeStage.WriteCryptoAsync(packetWriter, tlsClient.SendServerHandshake());
 
+                if(clientAuthentication)
+                    await handshakeStage.WriteCryptoAsync(packetWriter, tlsClient.SendCertificateRequest());
+                else
+                    await handshakeStage.WriteCryptoAsync(packetWriter, tlsClient.SendServerFinished());
+
                 if(debugLogging)
                     Console.WriteLine("Sending server handshake.");
             } else {
@@ -458,6 +465,13 @@ public sealed class QuicConnection : IAsyncDisposable {
 
             state = State.Handshake;
         }
+
+        if(state == State.Handshake && tlsClient.State == TlsClient.TlsState.WaitingFinishedOrCertificateRequest)
+            if(endpointType == EndpointType.Client) {
+                if(tlsClient.ClientAuthenticationRequested)
+                    await handshakeStage.WriteCryptoAsync(packetWriter, tlsClient.SendClientCertificate());
+            } else
+                await handshakeStage.WriteCryptoAsync(packetWriter, tlsClient.SendServerFinished());
 
         if(state == State.Handshake && tlsClient.State == TlsClient.TlsState.Connected) {
             applicationStage = new(this, StageType.Application) {

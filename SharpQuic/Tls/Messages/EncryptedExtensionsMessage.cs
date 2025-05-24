@@ -17,10 +17,10 @@ public sealed class EncryptedExtensionsMessage : IMessage {
         AlpnExtension.Encode(extensionsStream, [Protocol]);
         QuicTransportParametersExtension.Encode(extensionsStream, Parameters);
 
-        byte[] extensions = extensionsStream.ToArray();
+        Serializer.WriteUInt16(stream, (ushort)extensionsStream.Length);
 
-        Serializer.WriteUInt16(stream, (ushort)extensions.Length);
-        stream.Write(extensions);
+        extensionsStream.Position = 0;
+        extensionsStream.CopyTo(stream);
     }
 
     public static EncryptedExtensionsMessage Decode(Stream stream) {

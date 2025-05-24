@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace SharpQuic.IO;
 
@@ -16,66 +17,86 @@ public sealed class CutOutputStream(int bufferLength) {
 
     public int Available => buffer.Length - Fill;
 
+    readonly SemaphoreSlim semaphore = new(1, 1);
+
     public void Write(ReadOnlySpan<byte> data) {
-        if(Fill + data.Length > buffer.Length)
-            throw new OverflowException();
+        semaphore.Wait();
 
-        data.CopyTo(buffer.AsSpan()[Fill..]);
+        try {
+            if(Fill + data.Length > buffer.Length)
+                throw new OverflowException();
 
-        Fill += data.Length;
+            data.CopyTo(buffer.AsSpan()[Fill..]);
+
+            Fill += data.Length;
+        } finally {
+            semaphore.Release();
+        }
     }
 
     public void Read(Span<byte> destination, ulong offset) {
-        if(offset < Offset || offset + (ulong)destination.Length > Offset + (ulong)Fill)
-            throw new IndexOutOfRangeException();
+        semaphore.Wait();
+        
+        try {
+            if(offset < Offset || offset + (ulong)destination.Length > Offset + (ulong)Fill)
+                throw new IndexOutOfRangeException();
 
-        buffer.AsSpan().Slice((int)(offset - Offset), destination.Length).CopyTo(destination);
+            buffer.AsSpan().Slice((int)(offset - Offset), destination.Length).CopyTo(destination);
+        } finally {
+            semaphore.Release();
+        }
     }
 
     public void Confirm(ulong offset, ulong length) {
         ulong max = offset + length;
 
-        if(max <= Offset)
-            return;
+        semaphore.Wait();
 
-        bool inserted = false;
+        try {
+            if(max <= Offset)
+                return;
 
-        for(int i = 0; i < regions.Count; i++) {
-            if(regions[i].Min < offset)
-                continue;
+            bool inserted = false;
 
-            regions.Insert(i, (offset, max));
+            for(int i = 0; i < regions.Count; i++) {
+                if(regions[i].Min < offset)
+                    continue;
 
-            inserted = true;
-            
-            break;
-        }
+                regions.Insert(i, (offset, max));
 
-        if(!inserted)
-            regions.Add((offset, max));
-
-        if(offset > Offset)
-            return;
-
-        ulong prevOffset = Offset;
-
-        int removeCount = 0;
-
-        for(int i = 0; i < regions.Count; i++) {
-            if(regions[i].Min > Offset)
+                inserted = true;
+                
                 break;
+            }
 
-            Offset = Math.Max(Offset, regions[i].Max);
+            if(!inserted)
+                regions.Add((offset, max));
 
-            removeCount = i;
+            if(offset > Offset)
+                return;
+
+            ulong prevOffset = Offset;
+
+            int removeCount = 0;
+
+            for(int i = 0; i < regions.Count; i++) {
+                if(regions[i].Min > Offset)
+                    break;
+
+                Offset = Math.Max(Offset, regions[i].Max);
+
+                removeCount = i;
+            }
+
+            regions.RemoveRange(0, removeCount);
+
+            int advance = (int)(Offset - prevOffset);
+
+            buffer.AsSpan()[advance..Fill].CopyTo(buffer);
+
+            Fill -= advance;
+        } finally {
+            semaphore.Release();
         }
-
-        regions.RemoveRange(0, removeCount);
-
-        int advance = (int)(Offset - prevOffset);
-
-        buffer.AsSpan()[advance..Fill].CopyTo(buffer);
-
-        Fill -= advance;
     }
 }

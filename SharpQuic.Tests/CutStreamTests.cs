@@ -17,23 +17,23 @@ public class CutStreamTests {
 
         RandomNumberGenerator.Fill(data);
 
-        array.Write(data.AsSpan()[..100], 0);
+        await array.WriteAsync(data.AsMemory()[..100], 0);
 
-        array.Write(data.AsSpan()[100..200], 100);
+        await array.WriteAsync(data.AsMemory()[100..200], 100);
 
-        array.Write(data.AsSpan()[50..150], 50);
+        await array.WriteAsync(data.AsMemory()[50..150], 50);
 
-        array.Write(data.AsSpan()[150..300], 150);
+        await array.WriteAsync(data.AsMemory()[150..300], 150);
 
-        array.Write(data.AsSpan()[300..400], 300);
+        await array.WriteAsync(data.AsMemory()[300..400], 300);
 
-        array.Write(data.AsSpan()[0..500], 0);
+        await array.WriteAsync(data.AsMemory()[0..500], 0);
 
-        array.Write(data.AsSpan()[700..800], 700);
+        await array.WriteAsync(data.AsMemory()[700..800], 700);
 
-        array.Write(data.AsSpan()[900..1024], 900);
+        await array.WriteAsync(data.AsMemory()[900..1024], 900);
 
-        array.Write(data.AsSpan()[500..900], 500);
+        await array.WriteAsync(data.AsMemory()[500..900], 500);
 
         byte[] readedData = new byte[1024];
 
@@ -50,11 +50,11 @@ public class CutStreamTests {
 
         RandomNumberGenerator.Fill(data);
 
-        _ = Task.Run(() => {
+        _ = Task.Run(async () => {
             for(int i = 0; i < 2048; i += 256) {
                 while(array.MaxData < (ulong)i + 256) ;
                 
-                array.Write(data.AsSpan()[i..(i+256)], (ulong)i);
+                await array.WriteAsync(data.AsMemory()[i..(i+256)], (ulong)i);
             }
         });
 
@@ -73,13 +73,13 @@ public class CutStreamTests {
 
         RandomNumberGenerator.Fill(data);
 
-        stream.Write(data.AsSpan()[..512], 0);
+        await stream.WriteAsync(data.AsMemory()[..512], 0);
 
         byte[] readData = new byte[2048];
 
         await stream.ReadAsync(readData.AsMemory()[..256]);
 
-        stream.Write(data.AsSpan()[512..1024], 512);
+        await stream.WriteAsync(data.AsMemory()[512..1024], 512);
 
         await stream.ReadAsync(readData.AsMemory()[256..512]);
 
@@ -87,7 +87,7 @@ public class CutStreamTests {
 
         await stream.ReadAsync(readData.AsMemory()[768..1024]);
 
-        stream.Write(data.AsSpan()[1024..2048], 1024);
+        await stream.WriteAsync(data.AsMemory()[1024..2048], 1024);
 
         await stream.ReadAsync(readData.AsMemory()[1024..1536]);
 

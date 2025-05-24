@@ -12,9 +12,9 @@ namespace SharpQuic.Tests;
 public class QuicStreamTests {
     [Test, Explicit]
     public async Task QuicStreamTestAsync() {
-        CancellationTokenSource timeoutSource = new(20000);
+        CancellationTokenSource timeoutSource = new(15000);
 
-        byte[] data = new byte[8192];
+        byte[] data = new byte[(1 << 20) * 2];
 
         RandomNumberGenerator.Fill(data);
 
@@ -31,7 +31,7 @@ public class QuicStreamTests {
                         VerificationFlags = X509VerificationFlags.AllFlags
                     },
                     CancellationToken = timeoutSource.Token,
-                    DebugLogging = true
+                    //DebugLogging = true
                 });
 
                 QuicStream stream = await client.OpenUnidirectionalStream();
@@ -53,9 +53,7 @@ public class QuicStreamTests {
             Protocols = ["test"],
             CertificateChain = [certificate],
             CancellationToken = timeoutSource.Token,
-            DebugLogging = true,
-            DebugInputPacketLoss = 0.4,
-            DebugOutputPacketLoss = 0.4
+            //DebugLogging = true
         });
 
         /*server.OnStream += stream => {
