@@ -21,7 +21,8 @@ public class DoqTests {
             Protocols = ["doq"],
             CancellationToken = source.Token,
             DebugInputPacketLoss = 0.25,
-            DebugOutputPacketLoss = 0.25
+            DebugOutputPacketLoss = 0.25,
+            DebugLogging = true
         });
 
         string[] addresses = [

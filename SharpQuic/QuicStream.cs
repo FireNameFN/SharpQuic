@@ -49,8 +49,8 @@ public sealed class QuicStream {
 
     internal QuicStream(QuicConnection connection, ulong id, ulong peerMaxData) {
         Connection = connection;
-        this.peerMaxData = peerMaxData;
         Id = id;
+        this.peerMaxData = peerMaxData;
 
         if(!CanRead)
             peerClosed = true;
@@ -81,7 +81,7 @@ public sealed class QuicStream {
 
         ulong maxOffset = offset + (ulong)data.Length;
         
-        while(offset < maxOffset) {
+        while(offset < maxOffset || position < data.Length) {
             await outputSemaphore.WaitAsync(Connection.connectionSource.Token);
 
             if(position < data.Length && (offset >= outputStream.MaxData || outputStream.Available > 0)) {
@@ -99,7 +99,7 @@ public sealed class QuicStream {
             }
 
             if(position >= data.Length && outputStream.MaxData - offset < 1200 && !close) {
-                closed = close;
+                outputSemaphore.Release();
                 return;
             }
 
@@ -114,8 +114,6 @@ public sealed class QuicStream {
 
                 offset = sendOffset;
             } else if(peerMaxData - offset < 1) {
-                Console.WriteLine(offset);
-
                 outputSemaphore.Release();
                 await maxDataSemaphore.WaitAsync(Connection.connectionSource.Token);
                 await outputSemaphore.WaitAsync(Connection.connectionSource.Token);
@@ -130,9 +128,9 @@ public sealed class QuicStream {
             Console.WriteLine($"Stream Write {data.Length}");
     }
 
-    public ValueTask<int> FlushAsync(bool close = false) {
+    public async ValueTask FlushAsync(bool close = false) {
         if(closed)
-            return ValueTask.FromResult(0);
+            return;
 
         outputSemaphore.Wait(Connection.connectionSource.Token);
 
@@ -141,26 +139,22 @@ public sealed class QuicStream {
         outputSemaphore.Release();
 
         if(length < 1) {
-            if(close)
-                return SendStreamAsync(packetWriter, this.offset, 0, true);
+            if(close) {
+                await SendStreamAsync(packetWriter, this.offset, 0, true);
 
-            return ValueTask.FromResult(0);
+                closed = true;
+            }
+
+            return;
         }
-
-        closed |= close;
 
         ulong offset = this.offset;
 
         this.offset += length;
 
-        return SendStreamAsync(packetWriter, offset, (int)length, closed);
-    }
+        await SendStreamAsync(packetWriter, offset, (int)length, close);
 
-    public ValueTask<int> CloseAsync() {
-        if(closed)
-            return ValueTask.FromResult(0);
-
-        return SendStreamAsync(packetWriter, offset, 0, true);
+        closed = close;
     }
 
     public async Task ReadAsync(Memory<byte> memory) {
