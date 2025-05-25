@@ -29,51 +29,51 @@ public sealed class CutInputStream(int bufferLength) : IDisposable {
     public async Task WriteAsync(ReadOnlyMemory<byte> data, ulong offset) {
         await semaphore.WaitAsync();
 
-        if(offset < Offset) {
-            int length = (int)(Offset - offset);
+        try {
+            if(offset < Offset) {
+                int length = (int)(Offset - offset);
 
-            if(data.Length < length) {
-                semaphore.Release();
-                return;
+                if(data.Length < length)
+                    return;
+
+                data = data[length..];
+
+                offset = Offset;
             }
 
-            data = data[length..];
+            if(Offset + (ulong)buffer.Length < offset + (ulong)data.Length)
+                throw new OverflowException();
 
-            offset = Offset;
+            data.Span.CopyTo(buffer.AsSpan()[(int)(offset - Offset)..]);
+
+            (ulong, ulong) region = new(offset, offset + (ulong)data.Length);
+
+            bool inserted = false;
+
+            for(int i = 0; i < regions.Count; i++)
+                if(regions[i].Min > offset) {
+                    regions.Insert(i, region);
+                    inserted = true;
+                    break;
+                }
+
+            if(!inserted)
+                regions.Add(region);
+
+            for(int i = 0; i < regions.Count - 1; i++)
+                if(regions[i+1].Min <= regions[i].Max) {
+                    regions[i] = new(regions[i].Min, Math.Max(regions[i].Max, regions[i+1].Max));
+
+                    regions.RemoveAt(i+1);
+
+                    i--;
+                }
+
+            if(regions[0].Min <= offset && readSemaphore.CurrentCount < 1)
+                readSemaphore.Release();
+        } finally {
+            semaphore.Release();
         }
-
-        if(Offset + (ulong)buffer.Length < offset + (ulong)data.Length)
-            throw new OverflowException();
-
-        data.Span.CopyTo(buffer.AsSpan()[(int)(offset - Offset)..]);
-
-        (ulong, ulong) region = new(offset, offset + (ulong)data.Length);
-
-        bool inserted = false;
-
-        for(int i = 0; i < regions.Count; i++)
-            if(regions[i].Min > offset) {
-                regions.Insert(i, region);
-                inserted = true;
-                break;
-            }
-
-        if(!inserted)
-            regions.Add(region);
-
-        for(int i = 0; i < regions.Count - 1; i++)
-            if(regions[i+1].Min <= regions[i].Max) {
-                regions[i] = new(regions[i].Min, Math.Max(regions[i].Max, regions[i+1].Max));
-
-                regions.RemoveAt(i+1);
-
-                i--;
-            }
-
-        if(regions[0].Min <= offset && readSemaphore.CurrentCount < 1)
-            readSemaphore.Release();
-
-        semaphore.Release();
     }
 
     public async Task ReadAsync(Memory<byte> memory, CancellationToken cancellationToken = default) {
@@ -94,8 +94,6 @@ public sealed class CutInputStream(int bufferLength) : IDisposable {
             memoryOffset += length;
 
             Offset += (ulong)length;
-
-            Console.WriteLine(Offset);
 
             buffer.AsSpan()[length..].CopyTo(buffer);
 

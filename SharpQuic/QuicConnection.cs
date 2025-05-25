@@ -82,6 +82,10 @@ public sealed class QuicConnection : IAsyncDisposable {
 
     readonly Dictionary<ulong, QuicStream> streams = [];
 
+    static int nextNumber;
+
+    internal int number;
+
     internal QuicConnection(EndpointType endpointType, QuicConfiguration configuration) {
         this.endpointType = endpointType;
         protection = new(endpointType, configuration.Parameters.InitialSourceConnectionId);
@@ -112,6 +116,8 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         maxBidirectionalStreams = configuration.Parameters.InitialMaxStreamsBidi;
         maxUnidirectionalStreams = configuration.Parameters.InitialMaxStreamsUni;
+
+        number = Interlocked.Increment(ref nextNumber);
     }
 
     public static async Task<QuicConnection> ConnectAsync(QuicConfiguration configuration) {
@@ -264,7 +270,7 @@ public sealed class QuicConnection : IAsyncDisposable {
 
             if(packet is not RetryPacket) {
                 if(debugLogging)
-                    Console.WriteLine($"Unprotected packet: {packet.PacketType} {packet.PacketNumber} {packet.Payload.Length}");
+                    Console.WriteLine($"{number} Unprotected packet: {packet.PacketType} {packet.PacketNumber} {packet.Payload.Length}");
 
                 HashSet<uint> received = packet.PacketType switch {
                     PacketType.Initial => initialStage.Received,

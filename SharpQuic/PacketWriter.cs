@@ -9,13 +9,15 @@ public sealed class PacketWriter {
 
     readonly MemoryStream stream = new();
 
+    public FrameWriter FrameWriter { get; } = new();
+
     public int Length => (int)stream.Length;
 
     internal PacketWriter(QuicConnection connection) {
         this.connection = connection;
     }
 
-    public void Write(PacketType type, uint packetNumber, byte[] payload, byte[] token = null) {
+    public void Write(PacketType type, uint packetNumber, byte[] token = null) {
         Packet packet = type switch {
             PacketType.Initial => new InitialPacket() { Token = token ?? [] },
             PacketType.Handshake => new HandshakePacket(),
@@ -28,7 +30,7 @@ public sealed class PacketWriter {
         
         packet.DestinationConnectionId = connection.destinationConnectionId;
         packet.PacketNumber = packetNumber;
-        packet.Payload = payload;
+        packet.Payload = FrameWriter.ToPayload();
 
         stream.Write(connection.protection.Protect(packet, connection.initialStage?.KeySet, connection.handshakeStage?.KeySet, connection.applicationStage?.KeySet));
     }

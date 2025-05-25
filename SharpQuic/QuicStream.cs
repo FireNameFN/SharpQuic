@@ -25,17 +25,17 @@ public sealed class QuicStream {
 
     readonly CutInputStream inputStream = new(1 << 20);
 
-    readonly CutOutputStream outputStream = new(1 << 20);
+    readonly CutOutputStream outputStream = new(1 << 12);
 
     readonly Dictionary<uint, PacketInfo> packets = [];
 
     readonly PacketWriter packetWriter;
 
-    readonly FrameWriter frameWriter = new();
-
     readonly SemaphoreSlim maxDataSemaphore = new(0, 1);
 
     readonly SemaphoreSlim availableSemaphore = new(0, 1);
+
+    readonly SemaphoreSlim outputSemaphore = new(1, 1);
 
     ulong offset;
 
@@ -77,16 +77,19 @@ public sealed class QuicStream {
         if(closed)
             throw new QuicException();
 
-        closed = close;
-
         int position = 0;
 
         ulong maxOffset = offset + (ulong)data.Length;
         
         while(offset < maxOffset) {
+            await outputSemaphore.WaitAsync(Connection.connectionSource.Token);
+
             if(position < data.Length && (offset >= outputStream.MaxData || outputStream.Available > 0)) {
-                if(outputStream.Available < 1)
+                if(outputStream.Available < 1) {
+                    outputSemaphore.Release();
                     await availableSemaphore.WaitAsync(Connection.connectionSource.Token);
+                    await outputSemaphore.WaitAsync(Connection.connectionSource.Token);
+                }
 
                 int writeLength = Math.Min(outputStream.Available, data.Length - position);
 
@@ -95,20 +98,33 @@ public sealed class QuicStream {
                 position += writeLength;
             }
 
-            if(position >= data.Length && outputStream.MaxData - offset < 1200 && !close)
+            if(position >= data.Length && outputStream.MaxData - offset < 1200 && !close) {
+                closed = close;
                 return;
+            }
 
             int length = Math.Min(1200, Math.Min((int)(peerMaxData - offset), (int)(outputStream.MaxData - offset)));
 
             if(length > 0) {
                 ulong sendOffset = offset + (ulong)length;
 
+                outputSemaphore.Release();
                 await SendStreamAsync(packetWriter, offset, length, close && sendOffset >= maxOffset);
+                await outputSemaphore.WaitAsync(Connection.connectionSource.Token);
 
                 offset = sendOffset;
-            } else
+            } else if(peerMaxData - offset < 1) {
+                Console.WriteLine(offset);
+
+                outputSemaphore.Release();
                 await maxDataSemaphore.WaitAsync(Connection.connectionSource.Token);
+                await outputSemaphore.WaitAsync(Connection.connectionSource.Token);
+            }
+
+            outputSemaphore.Release();
         }
+
+        closed = close;
 
         if(Connection.debugLogging)
             Console.WriteLine($"Stream Write {data.Length}");
@@ -118,7 +134,11 @@ public sealed class QuicStream {
         if(closed)
             return ValueTask.FromResult(0);
 
+        outputSemaphore.Wait(Connection.connectionSource.Token);
+
         ulong length = outputStream.MaxData - this.offset;
+
+        outputSemaphore.Release();
 
         if(length < 1) {
             if(close)
@@ -169,7 +189,10 @@ public sealed class QuicStream {
     }
 
     internal void PacketAck(PacketWriter packetWriter, uint number) {
-        packets.Remove(number, out PacketInfo packet);
+        PacketInfo packet;
+
+        lock(packets)
+            packets.Remove(number, out packet);
 
         if(!packet.Data)
             return;
@@ -177,54 +200,65 @@ public sealed class QuicStream {
         if(Connection.debugLogging)
             Console.WriteLine($"STREAM CONFIRM {number}");
 
+        outputSemaphore.Wait(Connection.connectionSource.Token);
+
         outputStream.Confirm(packet.Offset, (ulong)packet.Length);
 
         if(outputStream.Available > 0 && availableSemaphore.CurrentCount < 1)
             availableSemaphore.Release();
 
+        outputSemaphore.Release();
+
         CheckClosed(packetWriter);
     }
 
     internal ValueTask<int> PacketLostAsync(PacketWriter packetWriter, uint number) {
-        packets.Remove(number, out PacketInfo info);
+        PacketInfo packet;
 
-        if(!info.Data)
+        lock(packets)
+            packets.Remove(number, out packet);
+
+        if(!packet.Data)
             return SendMaxStreamData(packetWriter);
 
-        return SendStreamAsync(packetWriter, info.Offset, info.Length, info.Fin);
+        return SendStreamAsync(packetWriter, packet.Offset, packet.Length, packet.Fin);
     }
 
     ValueTask<int> SendStreamAsync(PacketWriter packetWriter, ulong offset, int length, bool fin) {
         Span<byte> data = stackalloc byte[length];
 
+        outputSemaphore.Wait(Connection.connectionSource.Token);
         outputStream.Read(data, offset);
+        outputSemaphore.Release();
 
-        frameWriter.WriteStream(data, Id, offset, fin);
+        packetWriter.FrameWriter.WriteStream(data, Id, offset, fin);
 
         if(Connection.debugLogging)
             Console.WriteLine($"WRITE STREAM TO {offset + (ulong)length}");
 
-        frameWriter.WritePaddingUntil(20);
+        packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = Connection.applicationStage.GetNextPacketNumber(Id);
+        uint number = Connection.applicationStage.GetNextPacketNumber(Id, packetWriter == this.packetWriter);
 
-        packetWriter.Write(PacketType.OneRtt, number, frameWriter.ToPayload(), null);
+        packetWriter.Write(PacketType.OneRtt, number, null);
 
-        packets.Add(number, new(true, offset, length, fin));
+        lock(packets)
+            packets.Add(number, new(true, offset, length, fin));
 
         return Connection.SendAsync(packetWriter);
     }
 
     ValueTask<int> SendMaxStreamData(PacketWriter packetWriter) {
-        frameWriter.WriteMaxStreamData(Id, inputStream.MaxData);
+        packetWriter.FrameWriter.WriteMaxStreamData(Id, inputStream.MaxData);
 
-        frameWriter.WritePaddingUntil(20);
+        packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = Connection.applicationStage.GetNextPacketNumber(Id);
+        uint number = Connection.applicationStage.GetNextPacketNumber(Id, packetWriter == this.packetWriter);
 
-        packetWriter.Write(PacketType.OneRtt, number, frameWriter.ToPayload(), null);
+        packetWriter.Write(PacketType.OneRtt, number, null);
 
-        packets.Add(number, new(false, 0, 0, false));
+        lock(packets)
+            packets.Add(number, new(false, 0, 0, false));
 
         return Connection.SendAsync(packetWriter);
     }
@@ -242,6 +276,7 @@ public sealed class QuicStream {
 
         maxDataSemaphore.Dispose();
         availableSemaphore.Dispose();
+        outputSemaphore.Dispose();
     }
 
     readonly record struct PacketInfo(bool Data, ulong Offset, int Length, bool Fin);

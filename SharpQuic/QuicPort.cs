@@ -20,7 +20,7 @@ internal static class QuicPort {
     public static Socket CreateSocket() {
         Socket socket = new(SocketType.Dgram, ProtocolType.Udp);
 
-        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReceiveBuffer, (1 << 20) * 10);
+        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReceiveBuffer, 1 << 24);
 
         return socket;
     }
@@ -84,9 +84,13 @@ internal static class QuicPort {
 
         IPEndPoint point = new(IPAddress.Any, 0);
 
+        //long time = Stopwatch.GetTimestamp();
+
         while(true) {
             try {
                 SocketReceiveFromResult result = await socket.ReceiveFromAsync(data, point);
+
+                //Console.WriteLine($"Time: {(Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency}");
 
                 Memory<byte> id;
 

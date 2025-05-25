@@ -12,9 +12,9 @@ namespace SharpQuic.Tests;
 public class QuicStreamTests {
     [Test, Explicit]
     public async Task QuicStreamTestAsync() {
-        CancellationTokenSource timeoutSource = new(15000);
+        CancellationTokenSource timeoutSource = new(10000);
 
-        byte[] data = new byte[(1 << 20) * 2];
+        byte[] data = new byte[(1 << 20) * 10];
 
         RandomNumberGenerator.Fill(data);
 
@@ -67,6 +67,8 @@ public class QuicStreamTests {
         byte[] receiveData = new byte[data.Length];
 
         QuicStream stream = await server.ReceiveStream();
+
+        //_ = Task.Run(() => stream.ReadAsync(receiveData));
 
         await stream.ReadAsync(receiveData);
 
