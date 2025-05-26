@@ -14,8 +14,6 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
     public EndpointType EndpointType { get; } = endpointType;
 
-    public CipherSuite CipherSuite { get; set; } = CipherSuite.Aes128GcmSHA256;
-
     readonly byte[] sourceConnectionId = sourceConnectionId;
 
     bool initialKeysGenerated;
@@ -62,7 +60,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         Span<byte> tag = stackalloc byte[16];
 
-        switch(CipherSuite) {
+        switch(keySet.CipherSuite) {
             case CipherSuite.Aes128GcmSHA256:
             case CipherSuite.Aes256GcmSHA384:
                 using(AesGcm aesGcm = new(keySet.SourceKey, 16))
@@ -82,7 +80,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         Span<byte> mask = stackalloc byte[16];
 
-        GetMask(CipherSuite, keySet.SourceHp, sample, packet.PacketType, mask);
+        GetMask(keySet.CipherSuite, keySet.SourceHp, sample, packet.PacketType, mask);
 
         byte protectedFirstByte = (byte)(packet.GetUnprotectedFirstByte() ^ mask[0]);
 
@@ -211,7 +209,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
         Span<byte> mask = stackalloc byte[16];
 
-        GetMask(CipherSuite, keySet.DestinationHp, sample, type, mask);
+        GetMask(keySet.CipherSuite, keySet.DestinationHp, sample, type, mask);
 
         protectedFirstByte ^= mask[0];
 
@@ -239,7 +237,7 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
         packet.Payload = new byte[payload.Length];
 
         try {
-            switch(CipherSuite) {
+            switch(keySet.CipherSuite) {
                 case CipherSuite.Aes128GcmSHA256:
                 case CipherSuite.Aes256GcmSHA384:
                     using(AesGcm aesGcm = new(keySet.DestinationKey, 16))

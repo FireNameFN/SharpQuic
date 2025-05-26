@@ -147,7 +147,7 @@ public sealed class TlsClient {
         byte[] key1 = [4, ..k, ..k1];
 
         ClientHelloMessage message = new() {
-            CipherSuites = ChaCha20Poly1305.IsSupported ? [CipherSuite.ChaCha20Poly1305Sha256, CipherSuite.Aes256GcmSHA384, CipherSuite.Aes128GcmSHA256] : [CipherSuite.Aes256GcmSHA384, CipherSuite.Aes128GcmSHA256],
+            CipherSuites = ChaCha20Poly1305.IsSupported ? [/*TODO CipherSuite.ChaCha20Poly1305Sha256, */CipherSuite.Aes256GcmSHA384, CipherSuite.Aes128GcmSHA256] : [CipherSuite.Aes256GcmSHA384, CipherSuite.Aes128GcmSHA256],
             KeyShare = [new(NamedGroup.X25519, key), new(NamedGroup.SecP256r1, key1)],
             Protocols = protocols,
             Parameters = parameters

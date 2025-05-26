@@ -430,8 +430,6 @@ public sealed class QuicConnection : IAsyncDisposable {
                 KeySet = new(tlsClient.CipherSuite)
             };
 
-            protection.CipherSuite = tlsClient.CipherSuite;
-
             if(endpointType == EndpointType.Server) {
                 initialStage.CalculateProbeTimeout();
 

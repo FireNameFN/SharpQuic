@@ -20,7 +20,7 @@ public class QuicPacketProtectionTests {
             0d0010000e0403050306030203080408 050806002d00020101001c0002400100
             3900320408ffffffffffffffff050480 00ffff07048000ffff08011001048000
             75300901100f088394c8f03e51570806 048000ffff"
-            .Replace("\r\n", "").Replace(" ", ""), frame);
+            .Replace("\r\n", "").Replace("\n", "").Replace(" ", ""), frame);
 
         byte[] destinationConnectionId = Converter.HexToBytes("8394c8f03e515708");
 
@@ -81,7 +81,7 @@ public class QuicPacketProtectionTests {
             056df31bd267b6b90a079831aaf579be 0a39013137aac6d404f518cfd4684064
             7e78bfe706ca4cf5e9c5453e9f7cfd2b 8b4c8d169a44e55c88d4a9a7f9474241
             e221af44860018ab0856972e194cd934"
-            .Replace("\r\n", "").Replace(" ", ""), StringComparison.CurrentCultureIgnoreCase));
+            .Replace("\r\n", "").Replace("\n", "").Replace(" ", ""), StringComparison.CurrentCultureIgnoreCase));
 
         QuicPacketProtection destinationProtection = new(EndpointType.Server, []);
 
