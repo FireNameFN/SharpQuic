@@ -3,9 +3,11 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using NaCl.Core;
 using SharpQuic.Packets;
 using SharpQuic.Tls;
 using SharpQuic.Tls.Enums;
+using ChaCha20Poly1305 = NaCl.Core.ChaCha20Poly1305;
 
 namespace SharpQuic;
 
@@ -68,8 +70,9 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
                 break;
             case CipherSuite.ChaCha20Poly1305Sha256:
-                using(ChaCha20Poly1305 chacha = new(keySet.SourceKey))
-                    chacha.Encrypt(nonce, packet.Payload, payload, tag, packet.EncodeUnprotectedHeader());
+                ChaCha20Poly1305 chacha = new(keySet.SourceKey);
+                
+                chacha.Encrypt(nonce, packet.Payload, payload, tag, packet.EncodeUnprotectedHeader());
 
                 break;
         }
@@ -245,12 +248,13 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
                     break;
                 case CipherSuite.ChaCha20Poly1305Sha256:
-                    using(ChaCha20Poly1305 chacha = new(keySet.SourceKey))
-                        chacha.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
+                    ChaCha20Poly1305 chacha = new(keySet.DestinationKey);
+                    
+                    chacha.Decrypt(nonce, payload, remainder[^16..], packet.Payload, packet.EncodeUnprotectedHeader());
 
                     break;
             }
-        } catch(AuthenticationTagMismatchException) {
+        } catch(Exception) {
             Console.WriteLine("Invalid tag.");
 
             return null;
@@ -270,9 +274,11 @@ public sealed class QuicPacketProtection(EndpointType endpointType, byte[] sourc
 
     static void GetMask(CipherSuite cipherSuite, byte[] hp, ReadOnlySpan<byte> sample, PacketType type, Span<byte> mask) {
         if(cipherSuite == CipherSuite.ChaCha20Poly1305Sha256) {
-            using ChaCha20Poly1305 chacha = new(hp);
+            uint counter = BinaryPrimitives.ReadUInt32LittleEndian(sample[..4]);
 
-            chacha.Encrypt(sample[4..], [0, 0, 0, 0, 0], mask, stackalloc byte[16], sample[..3]);
+            ChaCha20 chacha = new(hp, (int)counter);
+
+            chacha.Encrypt(stackalloc byte[5], sample[4..], mask[..5]);
         } else {
             using Aes aes = Aes.Create();
 

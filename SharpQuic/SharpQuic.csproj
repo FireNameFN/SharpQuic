@@ -3,15 +3,16 @@
   <PropertyGroup>
     <OutputType>Library</OutputType>
     <TargetFramework>net8.0</TargetFramework>
-    <Version>0.4.3</Version>
+    <Version>0.5.0</Version>
   </PropertyGroup>
 
   <PropertyGroup>
-    <PackageOutputPath>C:/Works/Publish/SharpQuic</PackageOutputPath>
+    <PackageOutputPath>/home/fn/Works/Publish/SharpQuic</PackageOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.0" />
+    <PackageReference Include="NaCl.Core" Version="2.0.6" />
   </ItemGroup>
 
 </Project>

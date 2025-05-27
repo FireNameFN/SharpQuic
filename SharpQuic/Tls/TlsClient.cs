@@ -147,7 +147,7 @@ public sealed class TlsClient {
         byte[] key1 = [4, ..k, ..k1];
 
         ClientHelloMessage message = new() {
-            CipherSuites = ChaCha20Poly1305.IsSupported ? [/*TODO CipherSuite.ChaCha20Poly1305Sha256, */CipherSuite.Aes256GcmSHA384, CipherSuite.Aes128GcmSHA256] : [CipherSuite.Aes256GcmSHA384, CipherSuite.Aes128GcmSHA256],
+            CipherSuites = [CipherSuite.ChaCha20Poly1305Sha256, CipherSuite.Aes256GcmSHA384, CipherSuite.Aes128GcmSHA256],
             KeyShare = [new(NamedGroup.X25519, key), new(NamedGroup.SecP256r1, key1)],
             Protocols = protocols,
             Parameters = parameters
@@ -348,7 +348,7 @@ public sealed class TlsClient {
         if(State != TlsState.Start)
             throw new QuicException();
 
-        if(ChaCha20Poly1305.IsSupported && message.CipherSuites.Contains(CipherSuite.ChaCha20Poly1305Sha256))
+        if(message.CipherSuites.Contains(CipherSuite.ChaCha20Poly1305Sha256))
             CipherSuite = CipherSuite.ChaCha20Poly1305Sha256;
         else if(message.CipherSuites.Contains(CipherSuite.Aes256GcmSHA384))
             CipherSuite = CipherSuite.Aes256GcmSHA384;
