@@ -184,7 +184,7 @@ public sealed class QuicConnection : IAsyncDisposable {
         return stream;
     }
 
-    public ValueTask<QuicStream> ReceiveStream() {
+    public ValueTask<QuicStream> ReceiveStreamAsync() {
         return channel.Reader.ReadAsync(connectionSource.Token);
     }
 

@@ -47,16 +47,18 @@ public sealed class QuicStream {
 
     bool peerClosed;
 
+    bool declaredOpen;
+
     internal QuicStream(QuicConnection connection, ulong id, ulong peerMaxData) {
         Connection = connection;
         Id = id;
         this.peerMaxData = peerMaxData;
 
-        if(!CanRead)
-            peerClosed = true;
+        peerClosed = !CanRead;
         
-        if(!CanWrite)
-            closed = true;
+        closed = !CanWrite;
+
+        declaredOpen = Connection.endpointType == EndpointType.Client != Client || !Bidirectional;
 
         packetWriter = new(connection);
 
@@ -112,6 +114,8 @@ public sealed class QuicStream {
                 await SendStreamAsync(packetWriter, offset, length, close && sendOffset >= maxOffset);
                 await outputSemaphore.WaitAsync(Connection.connectionSource.Token);
 
+                declaredOpen = true;
+
                 offset = sendOffset;
             } else if(peerMaxData - offset < 1) {
                 outputSemaphore.Release();
@@ -143,6 +147,10 @@ public sealed class QuicStream {
                 await SendStreamAsync(packetWriter, this.offset, 0, true);
 
                 closed = true;
+            } else if(!declaredOpen) {
+                await SendStreamAsync(packetWriter, 0, 0, false);
+
+                declaredOpen = true;
             }
 
             return;
