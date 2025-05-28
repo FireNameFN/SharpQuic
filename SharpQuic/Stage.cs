@@ -230,6 +230,12 @@ public sealed class Stage {
             await connection.SendAsync(packetWriter);
         }
 
+        if(connection.writeMaxStreams) {
+            WriteMaxStreams(packetWriter);
+
+            await connection.SendAsync(packetWriter);
+        }
+
         ValueTask<int> PacketLostAsync(uint number) {
             string stage = null;
 

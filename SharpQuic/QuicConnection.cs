@@ -82,6 +82,8 @@ public sealed class QuicConnection : IAsyncDisposable {
 
     readonly Dictionary<ulong, QuicStream> streams = [];
 
+    internal bool writeMaxStreams;
+
     static int nextNumber;
 
     internal int number;
@@ -199,7 +201,7 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         stream.Dispose();
 
-        applicationStage.WriteMaxStreams(packetWriter);
+        writeMaxStreams = true;
     }
 
     internal ValueTask<int> SendAsync(PacketWriter packetWriter) {
