@@ -231,6 +231,8 @@ public sealed class Stage {
         }
 
         if(connection.writeMaxStreams) {
+            connection.writeMaxStreams = false;
+
             WriteMaxStreams(packetWriter);
 
             await connection.SendAsync(packetWriter);
