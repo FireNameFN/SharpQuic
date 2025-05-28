@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -12,9 +13,9 @@ namespace SharpQuic.Tests;
 public class QuicStreamTests {
     [Test, Explicit]
     public async Task QuicStreamTestAsync() {
-        CancellationTokenSource timeoutSource = new(10000);
+        CancellationTokenSource timeoutSource = new(25000);
 
-        byte[] data = new byte[(1 << 20) * 50];
+        byte[] data = new byte[(1 << 20) * 200];
 
         RandomNumberGenerator.Fill(data);
 
@@ -31,15 +32,25 @@ public class QuicStreamTests {
                         VerificationFlags = X509VerificationFlags.AllFlags
                     },
                     CancellationToken = timeoutSource.Token,
-                    DebugLogging = true
+                    //DebugLogging = true
                 });
 
                 QuicStream stream = await client.OpenUnidirectionalStream();
 
-                await stream.WriteAsync(data, true);
+                long time = Stopwatch.GetTimestamp();
+
+                for(int i = 0; i < 200; i++) {
+                    Console.WriteLine(i);
+                    Console.WriteLine((Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency);
+                    await stream.WriteAsync(data.AsMemory().Slice((1 << 20) * i, 1 << 20));
+                }
+
+                await stream.FlushAsync(true);
 
                 source.SetResult();
             } catch(Exception e) {
+                Console.WriteLine(e);
+
                 source.SetException(e);
             }
         });
@@ -53,7 +64,9 @@ public class QuicStreamTests {
             Protocols = ["test"],
             CertificateChain = [certificate],
             CancellationToken = timeoutSource.Token,
-            //DebugLogging = true
+            //DebugLogging = true,
+            //DebugInputPacketLoss = 0.01,
+            //DebugOutputPacketLoss = 0.01
         });
 
         /*server.OnStream += stream => {

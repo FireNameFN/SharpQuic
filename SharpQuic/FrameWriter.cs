@@ -37,6 +37,8 @@ public sealed class FrameWriter {
         //foreach(uint ack in acks)
         //    Console.WriteLine($"ACK {ack}");
 
+        //Console.WriteLine($"Acks {acks.Count}");
+
         List<(uint Gap, uint Length)> ranges = [];
 
         uint first = acks.Max;

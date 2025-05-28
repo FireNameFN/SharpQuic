@@ -235,12 +235,12 @@ public sealed class QuicStream {
 
         packetWriter.FrameWriter.WriteStream(data, Id, offset, fin);
 
-        if(Connection.debugLogging)
-            Console.WriteLine($"WRITE STREAM TO {offset + (ulong)length}");
-
         packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = Connection.applicationStage.GetNextPacketNumber(Id, packetWriter == this.packetWriter);
+        uint number = Connection.applicationStage.GetNextPacketNumber(Id);
+
+        if(Connection.debugLogging)
+            Console.WriteLine($"WRITE STREAM {number} TO {offset + (ulong)length}");
 
         packetWriter.Write(PacketType.OneRtt, number, null);
 
@@ -255,7 +255,7 @@ public sealed class QuicStream {
 
         packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = Connection.applicationStage.GetNextPacketNumber(Id, packetWriter == this.packetWriter);
+        uint number = Connection.applicationStage.GetNextPacketNumber(Id);
 
         packetWriter.Write(PacketType.OneRtt, number, null);
 

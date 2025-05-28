@@ -30,7 +30,7 @@ public sealed class Stage {
 
     readonly StageType type;
 
-    internal readonly SortedSet<uint> acks = [];
+    readonly SortedSet<uint> acks = [];
 
     readonly Dictionary<uint, PacketInfo> packets = [];
 
@@ -78,201 +78,204 @@ public sealed class Stage {
     public async Task PeerAckAsync(PacketWriter packetWriter, AckFrame frame) {
         await inFlightSemaphore.WaitAsync();
 
-        try {
-            bool ackEliciting = false;
+        bool ackEliciting = false;
 
-            int FindInFlightPacket(uint number) {
-                for(int i = 0; i < inFlightPackets.Count; i++)
-                    if(inFlightPackets[i].Number == number)
-                        return i;
+        int FindInFlightPacket(uint number) {
+            for(int i = 0; i < inFlightPackets.Count; i++)
+                if(inFlightPackets[i].Number == number)
+                    return i;
 
-                return -1;
-            }
+            return -1;
+        }
 
-            void RemoveInFlightPacket(int index) {
-                if(connection.debugLogging)
-                    Console.WriteLine($"{connection.number} Confirmed: {inFlightPackets[index].Number}");
+        void RemoveInFlightPacket(int index) {
+            if(connection.debugLogging)
+                Console.WriteLine($"{connection.number} Confirmed: {inFlightPackets[index].Number}");
 
-                ackEliciting |= inFlightPackets[index].AckEliciting;
-                
-                bool exists;
-                PacketInfo packet;
+            ackEliciting |= inFlightPackets[index].AckEliciting;
+            
+            bool exists;
+            PacketInfo packet;
 
-                lock(packets)
-                    exists = packets.Remove(inFlightPackets[index].Number, out packet);
+            lock(packets)
+                exists = packets.Remove(inFlightPackets[index].Number, out packet);
 
-                if(packet.Type == PacketInfoType.Stream)
-                    connection.StreamPacketAck(inFlightPackets[index].Number, packet.StreamId);
-                else if(packet.Acks?.Length > 0)
+            if(packet.Type == PacketInfoType.Stream)
+                connection.StreamPacketAck(inFlightPackets[index].Number, packet.StreamId);
+            else if(packet.Acks?.Length > 0)
+                lock(acks)
                     acks.RemoveWhere(ack => packet.Acks.Contains(ack));
 
-                int last = inFlightPackets.Count - 1;
+            int last = inFlightPackets.Count - 1;
 
-                inFlightPackets[index] = inFlightPackets[last];
+            inFlightPackets[index] = inFlightPackets[last];
 
-                inFlightPackets.RemoveAt(last);
-            }
+            inFlightPackets.RemoveAt(last);
+        }
 
-            void FindAndRemoveInFlightPacket(uint number) {
-                int index = FindInFlightPacket(number);
+        void FindAndRemoveInFlightPacket(uint number) {
+            int index = FindInFlightPacket(number);
 
-                if(index < 0)
-                    return;
+            if(index < 0)
+                return;
 
-                RemoveInFlightPacket(index);
-            }
+            RemoveInFlightPacket(index);
+        }
 
-            largestAcknowledged = Math.Max(largestAcknowledged, frame.LargestAcknowledged);
+        largestAcknowledged = Math.Max(largestAcknowledged, frame.LargestAcknowledged);
 
-            int index = FindInFlightPacket(frame.LargestAcknowledged);
+        int index = FindInFlightPacket(frame.LargestAcknowledged);
 
-            bool newly = index >= 0;
+        bool newly = index >= 0;
 
-            long sendTime = 0;
+        long sendTime = 0;
 
-            if(newly) {
-                sendTime = inFlightPackets[index].SendTime;
+        if(newly) {
+            sendTime = inFlightPackets[index].SendTime;
 
-                RemoveInFlightPacket(index);
-            }
+            RemoveInFlightPacket(index);
+        }
 
-            uint back = 1;
+        uint back = 1;
 
-            for(; back <= frame.FirstAckRange; back++)
+        for(; back <= frame.FirstAckRange; back++)
+            FindAndRemoveInFlightPacket(frame.LargestAcknowledged - back);
+
+        foreach(AckFrame.AckRange range in frame.AckRanges) {
+            back += range.Gap + 1;
+
+            uint toBack = back + range.AckRangeLength;
+
+            for(; back <= toBack; back++)
                 FindAndRemoveInFlightPacket(frame.LargestAcknowledged - back);
+        }
 
-            foreach(AckFrame.AckRange range in frame.AckRanges) {
-                back += range.Gap + 1;
+        if(ackEliciting)
+            CalculateProbeTimeout();
 
-                uint toBack = back + range.AckRangeLength;
+        bool first = latestRtt < 0;
 
-                for(; back <= toBack; back++)
-                    FindAndRemoveInFlightPacket(frame.LargestAcknowledged - back);
-            }
+        latestRtt = (int)((Stopwatch.GetTimestamp() - sendTime) * 1000 / Stopwatch.Frequency);
 
-            if(ackEliciting)
-                CalculateProbeTimeout();
+        if(newly && ackEliciting) {
+            if(first) {
+                minRtt = latestRtt;
+                smoothedRtt = latestRtt;
+                rttVar = latestRtt / 2;
+            } else {
+                minRtt = Math.Min(minRtt, latestRtt);
 
-            bool first = latestRtt < 0;
+                int ackDelay = frame.AckDelay * (1 << AckDelayExponent);
 
-            latestRtt = (int)((Stopwatch.GetTimestamp() - sendTime) * 1000 / Stopwatch.Frequency);
+                if(MaxAckDelay >= 0)
+                    ackDelay = Math.Min(ackDelay, MaxAckDelay);
 
-            if(newly && ackEliciting) {
-                if(first) {
-                    minRtt = latestRtt;
-                    smoothedRtt = latestRtt;
-                    rttVar = latestRtt / 2;
-                } else {
-                    minRtt = Math.Min(minRtt, latestRtt);
+                int adjustedRtt = latestRtt;
 
-                    int ackDelay = frame.AckDelay * (1 << AckDelayExponent);
+                if(latestRtt >= minRtt + ackDelay)
+                    adjustedRtt = latestRtt - ackDelay;
 
-                    if(MaxAckDelay >= 0)
-                        ackDelay = Math.Min(ackDelay, MaxAckDelay);
+                smoothedRtt = (7 * smoothedRtt + adjustedRtt) / 8;
 
-                    int adjustedRtt = latestRtt;
+                int rttVarSample = Math.Abs(smoothedRtt - adjustedRtt);
 
-                    if(latestRtt >= minRtt + ackDelay)
-                        adjustedRtt = latestRtt - ackDelay;
+                rttVar = (3 * rttVar + rttVarSample) / 4;
 
-                    smoothedRtt = (7 * smoothedRtt + adjustedRtt) / 8;
-
-                    int rttVarSample = Math.Abs(smoothedRtt - adjustedRtt);
-
-                    rttVar = (3 * rttVar + rttVarSample) / 4;
-
-                    if(connection.debugLogging) {
-                        Console.WriteLine($"Latest RTT: {latestRtt}");
-                        Console.WriteLine($"Min RTT: {minRtt}");
-                        Console.WriteLine($"Smoothed RTT: {smoothedRtt}");
-                        Console.WriteLine($"RTT Var: {rttVar}");
-                    }
+                if(connection.debugLogging) {
+                    Console.WriteLine($"Latest RTT: {latestRtt}");
+                    Console.WriteLine($"Min RTT: {minRtt}");
+                    Console.WriteLine($"Smoothed RTT: {smoothedRtt}");
+                    Console.WriteLine($"RTT Var: {rttVar}");
                 }
             }
+        }
 
-            long time = Stopwatch.GetTimestamp();
+        long time = Stopwatch.GetTimestamp();
 
-            int threshold = Math.Max(TimeThresholdNumerator * Math.Max(smoothedRtt, latestRtt) / TimeThresholdDenominator, Granularity);
+        int threshold = Math.Max(TimeThresholdNumerator * Math.Max(smoothedRtt, latestRtt) / TimeThresholdDenominator, Granularity);
+
+        List<uint> lostPackets = [];
+        
+        int count = inFlightPackets.Count;
+
+        bool writeAck = false;
+
+        for(int i = 0; i < count; i++) {
+            InFlightPacket packet = inFlightPackets[i];
+
+            if(largestAcknowledged < packet.Number + PacketThreshold)
+                continue;
+
+            if((time - packet.SendTime) * 1000 / Stopwatch.Frequency < threshold)
+                continue;
+
+            //await PacketLostAsync(packet.Number);
+
+            lostPackets.Add(packet.Number);
+
+            inFlightPackets.RemoveAt(i);
+
+            i--;
+            count--;
+        }
+
+        inFlightSemaphore.Release();
+
+        foreach(uint number in lostPackets)
+            await PacketLostAsync(number);
+
+        if(writeAck) {
+            WriteAck(packetWriter, true);
+
+            await connection.SendAsync(packetWriter);
+        }
+
+        ValueTask<int> PacketLostAsync(uint number) {
+            string stage = null;
+
+            if(connection.initialStage == this)
+                stage = "Initial";
+            else if(connection.handshakeStage == this)
+                stage = "Handshake";
+            else if(connection.applicationStage == this)
+                stage = "Application";
+
+            bool exists;
+            PacketInfo packet;
+
+            lock(packets)
+                exists = packets.Remove(number, out packet);
+
+            if(connection.debugLogging)
+                Console.WriteLine($"{connection.number} {stage}: Packet lost: {number} that {(exists ? "exists" : "doesn't exists")}");
+
+            if(packet.Type == PacketInfoType.Stream)
+                return connection.StreamPacketLostAsync(number, packet.StreamId);
+
+            if(packet.Type == PacketInfoType.Crypto)
+                WriteCrypto(packetWriter, packet.Offset, packet.Length, packet.Token);
+            else if(packet.Type == PacketInfoType.HandshakeDone)
+                WriteHandshakeDone(packetWriter);
+            else if(packet.Type == PacketInfoType.MaxStreams)
+                WriteMaxStreams(packetWriter);
             
-            int count = inFlightPackets.Count;
+            writeAck = true;
 
-            bool writeAck = false;
-
-            for(int i = 0; i < count; i++) {
-                InFlightPacket packet = inFlightPackets[i];
-
-                if(largestAcknowledged < packet.Number + PacketThreshold)
-                    continue;
-
-                if((time - packet.SendTime) * 1000 / Stopwatch.Frequency < threshold)
-                    continue;
-
-                await PacketLostAsync(packet.Number);
-
-                inFlightPackets.RemoveAt(i);
-
-                i--;
-                count--;
-            }
-
-
-            if(writeAck) {
-                WriteAck(packetWriter, true);
-
-                await connection.SendAsync(packetWriter);
-            }
-
-            ValueTask<int> PacketLostAsync(uint number) {
-                string stage = null;
-
-                if(connection.initialStage == this)
-                    stage = "Initial";
-                else if(connection.handshakeStage == this)
-                    stage = "Handshake";
-                else if(connection.applicationStage == this)
-                    stage = "Application";
-
-                bool exists;
-                PacketInfo packet;
-
-                lock(packets)
-                    exists = packets.Remove(number, out packet);
-
-                if(connection.debugLogging)
-                    Console.WriteLine($"{connection.number} {stage}: Packet lost: {number} that {(exists ? "exists" : "doesn't exists")}");
-
-                if(packet.Type == PacketInfoType.Stream)
-                    return connection.StreamPacketLostAsync(number, packet.StreamId);
-
-                if(packet.Type == PacketInfoType.Crypto)
-                    WriteCrypto(packetWriter, packet.Offset, packet.Length, packet.Token);
-                else if(packet.Type == PacketInfoType.HandshakeDone)
-                    WriteHandshakeDone(packetWriter);
-                else if(packet.Type == PacketInfoType.MaxStreams)
-                    WriteMaxStreams(packetWriter);
-                
-                writeAck = true;
-
-                return connection.SendAsync(packetWriter);
-            }
-        } finally {
-            inFlightSemaphore.Release();
+            return connection.SendAsync(packetWriter);
         }
     }
 
-    public uint GetNextPacketNumber(bool ackEliciting, bool wait) {
+    public uint GetNextPacketNumber(bool ackEliciting) {
         uint number = Interlocked.Increment(ref nextPacketNumber);
 
         if(connection.debugLogging)
             Console.WriteLine($"{connection.number} {type}: Packet number {number}");
 
-        if(wait)
-            inFlightSemaphore.Wait();
+        inFlightSemaphore.Wait();
 
         inFlightPackets.Add(new(number, ackEliciting, Stopwatch.GetTimestamp()));
 
-        if(wait)
-            inFlightSemaphore.Release();
+        inFlightSemaphore.Release();
 
         if(ackEliciting)
             CalculateProbeTimeout();
@@ -280,8 +283,8 @@ public sealed class Stage {
         return number;
     }
 
-    public uint GetNextPacketNumber(ulong streamId, bool wait) {
-        uint number = GetNextPacketNumber(true, wait);
+    public uint GetNextPacketNumber(ulong streamId) {
+        uint number = GetNextPacketNumber(true);
         
         lock(packets)
             packets.Add(number, new(PacketInfoType.Stream, PacketType.OneRtt, null, streamId, 0, 0, null));
@@ -320,7 +323,7 @@ public sealed class Stage {
         else
             packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = GetNextPacketNumber(true, false);
+        uint number = GetNextPacketNumber(true);
 
         if(connection.debugLogging)
             Console.WriteLine($"Crypto {type}");
@@ -341,13 +344,19 @@ public sealed class Stage {
         if(acks.Count < 1 || !ackEliciting && !force)
             return;
 
-        packetWriter.FrameWriter.WriteAck(acks);
+        uint[] acksArray;
+
+        lock(acks) {
+            packetWriter.FrameWriter.WriteAck(acks);
+
+            acksArray = [..acks];
+        }
         
         ackEliciting = false;
 
         packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = GetNextPacketNumber(false, false);
+        uint number = GetNextPacketNumber(false);
 
         PacketType packetType = type switch {
             StageType.Initial => PacketType.Initial,
@@ -356,7 +365,7 @@ public sealed class Stage {
         };
 
         lock(packets)
-            packets.Add(number, new(PacketInfoType.Ack, packetType, [..acks], 0, 0, 0, null));
+            packets.Add(number, new(PacketInfoType.Ack, packetType, acksArray, 0, 0, 0, null));
 
         packetWriter.Write(packetType, number);
     }
@@ -367,7 +376,7 @@ public sealed class Stage {
 
         packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = GetNextPacketNumber(true, false);
+        uint number = GetNextPacketNumber(true);
 
         lock(packets)
             packets.Add(number, new(PacketInfoType.MaxStreams, PacketType.OneRtt, null, 0, 0, 0, null));
@@ -382,18 +391,24 @@ public sealed class Stage {
             return;
         }
 
+        uint[] acksArray;
+
         if(acks.Count > 0) {
-            lock(acks)
+            lock(acks) {
                 packetWriter.FrameWriter.WriteAck(acks);
+
+                acksArray = [..acks];
+            }
         
             ackEliciting = false;
-        }
+        } else
+            acksArray = [];
 
         packetWriter.FrameWriter.WritePing();
 
         packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = GetNextPacketNumber(true, true);
+        uint number = GetNextPacketNumber(true);
 
         if(connection.debugLogging)
             Console.WriteLine($"Probe {type}");
@@ -405,7 +420,7 @@ public sealed class Stage {
         };
 
         lock(packets)
-            packets.Add(number, new(PacketInfoType.Ack, packetType, [..acks], 0, 0, 0, null));
+            packets.Add(number, new(PacketInfoType.Ack, packetType, acksArray, 0, 0, 0, null));
 
         packetWriter.Write(packetType, number);
     }
@@ -415,7 +430,7 @@ public sealed class Stage {
 
         packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = GetNextPacketNumber(true, false);
+        uint number = GetNextPacketNumber(true);
 
         PacketType packetType = type switch {
             StageType.Initial => PacketType.Initial,

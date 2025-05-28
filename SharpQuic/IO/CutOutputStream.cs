@@ -6,7 +6,7 @@ namespace SharpQuic.IO;
 public sealed class CutOutputStream(int bufferLength) {
     readonly byte[] buffer = new byte[bufferLength];
 
-    internal readonly List<(ulong Min, ulong Max)> regions = [];
+    readonly List<(ulong Min, ulong Max)> regions = [];
 
     public ulong Offset { get; private set; }
 
