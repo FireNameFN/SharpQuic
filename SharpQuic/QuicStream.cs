@@ -25,7 +25,7 @@ public sealed class QuicStream {
 
     readonly CutInputStream inputStream = new(1 << 20);
 
-    readonly CutOutputStream outputStream = new(1 << 12);
+    readonly CutOutputStream outputStream = new(1 << 20);
 
     readonly Dictionary<uint, PacketInfo> packets = [];
 
@@ -168,7 +168,7 @@ public sealed class QuicStream {
     public async Task ReadAsync(Memory<byte> memory) {
         await inputStream.ReadAsync(memory, Connection.connectionSource.Token);
 
-        CheckClosed(packetWriter);
+        CheckClosed();
     }
 
     internal async Task PutAsync(ReadOnlyMemory<byte> data, ulong offset, bool close) {
@@ -190,7 +190,7 @@ public sealed class QuicStream {
             maxDataSemaphore.Release();
     }
 
-    internal void PacketAck(PacketWriter packetWriter, uint number) {
+    internal void PacketAck(uint number) {
         PacketInfo packet;
 
         lock(packets)
@@ -211,23 +211,23 @@ public sealed class QuicStream {
 
         outputSemaphore.Release();
 
-        CheckClosed(packetWriter);
+        CheckClosed();
     }
 
-    internal ValueTask<int> PacketLostAsync(PacketWriter packetWriter, uint number) {
+    internal Task PacketLostAsync(PacketWriter packetWriter, uint number) {
         PacketInfo packet;
 
         lock(packets)
             packets.Remove(number, out packet);
 
         if(!packet.Data)
-            return SendMaxStreamData(packetWriter);
+            return SendMaxStreamData(packetWriter).AsTask();
 
         return SendStreamAsync(packetWriter, packet.Offset, packet.Length, packet.Fin);
     }
 
-    ValueTask<int> SendStreamAsync(PacketWriter packetWriter, ulong offset, int length, bool fin) {
-        Span<byte> data = stackalloc byte[length];
+    async Task SendStreamAsync(PacketWriter packetWriter, ulong offset, int length, bool fin) {
+        byte[] data = new byte[length]; // TODO .NET 9
 
         outputSemaphore.Wait(Connection.connectionSource.Token);
         outputStream.Read(data, offset);
@@ -242,12 +242,16 @@ public sealed class QuicStream {
         if(Connection.debugLogging)
             Console.WriteLine($"WRITE STREAM {number} TO {offset + (ulong)length}");
 
-        packetWriter.Write(PacketType.OneRtt, number, null);
+        int dataLength = packetWriter.Write(PacketType.OneRtt, number, null);
+
+        await Connection.applicationStage.WaitForCongestion(dataLength);
+
+        Connection.applicationStage.AddInFlightPacket(number, true, dataLength);
 
         lock(packets)
             packets.Add(number, new(true, offset, length, fin));
 
-        return Connection.SendAsync(packetWriter);
+        await Connection.SendAsync(packetWriter);
     }
 
     ValueTask<int> SendMaxStreamData(PacketWriter packetWriter) {
@@ -257,7 +261,9 @@ public sealed class QuicStream {
 
         uint number = Connection.applicationStage.GetNextPacketNumber(Id);
 
-        packetWriter.Write(PacketType.OneRtt, number, null);
+        int dataLength = packetWriter.Write(PacketType.OneRtt, number, null);
+
+        Connection.applicationStage.AddInFlightPacket(number, true, dataLength);
 
         lock(packets)
             packets.Add(number, new(false, 0, 0, false));
@@ -265,12 +271,12 @@ public sealed class QuicStream {
         return Connection.SendAsync(packetWriter);
     }
 
-    void CheckClosed(PacketWriter packetWriter) {
+    void CheckClosed() {
         if(closed && peerClosed && inputStream.Empty && outputStream.Offset >= offset)
-            Connection.StreamClosed(packetWriter, Id);
+            Connection.StreamClosed(Id);
     }
 
-    internal void Dispose() {   
+    internal void Dispose() {
         if(Connection.debugLogging)
             Console.WriteLine($"STREAM {Id} DISPOSE");
 

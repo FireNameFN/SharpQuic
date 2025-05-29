@@ -54,6 +54,8 @@ public sealed class QuicConnection : IAsyncDisposable {
 
     readonly double debugOutputPacketLoss;
 
+    readonly int debugOutputDelay;
+
     public IPEndPoint LocalPoint { get; private set; }
 
     public IPEndPoint RemotePoint { get; internal set; }
@@ -113,6 +115,8 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         debugInputPacketLoss = configuration.DebugInputPacketLoss;
         debugOutputPacketLoss = configuration.DebugOutputPacketLoss;
+
+        debugOutputDelay = configuration.DebugOutputDelay;
 
         clientAuthentication = configuration.ClientAuthentication;
 
@@ -190,7 +194,7 @@ public sealed class QuicConnection : IAsyncDisposable {
         return channel.Reader.ReadAsync(connectionSource.Token);
     }
 
-    internal void StreamClosed(PacketWriter packetWriter, ulong id) {
+    internal void StreamClosed(ulong id) {
         streams.Remove(id, out QuicStream stream);
 
         if(stream.Client == (endpointType == EndpointType.Client))
@@ -220,6 +224,18 @@ public sealed class QuicConnection : IAsyncDisposable {
         if(debugLogging)
             Console.WriteLine($"Sending datagram: {datagram.Length}");
 
+        if(debugOutputDelay > 0 && socket.LocalEndPoint is not null) {
+            byte[] data = [..datagram.Span];
+
+            Task.Run(async () => {
+                await Task.Delay(debugOutputDelay);
+
+                await socket.SendToAsync(data, RemotePoint);
+            });
+
+            return ValueTask.FromResult(0);
+        }
+
         return socket.SendToAsync(datagram, RemotePoint);
     }
 
@@ -231,13 +247,13 @@ public sealed class QuicConnection : IAsyncDisposable {
         return SendAsync(packetWriter);
     }
 
-    internal ValueTask<int> StreamPacketLostAsync(uint number, ulong streamId) {
-        return streams[streamId].PacketLostAsync(packetWriter, number);
+    internal Task StreamPacketLostAsync(uint number, ulong streamId) {
+        return streams[streamId].PacketLostAsync(new(this), number); // TODO
     }
 
     internal void StreamPacketAck(uint number, ulong streamId) {
         if(streams.TryGetValue(streamId, out QuicStream stream))
-            stream.PacketAck(packetWriter, number);
+            stream.PacketAck(number);
     }
 
     internal async Task ReceiveAsync(IPEndPoint point, byte[] data, int length) {

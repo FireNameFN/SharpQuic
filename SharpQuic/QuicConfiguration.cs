@@ -26,4 +26,6 @@ public readonly struct QuicConfiguration() {
     public double DebugInputPacketLoss { get; init; }
 
     public double DebugOutputPacketLoss { get; init; }
+
+    public int DebugOutputDelay { get; init; }
 }

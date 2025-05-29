@@ -3,7 +3,9 @@
 
 - [X] Encryption
 - [X] Loss recovery
+- [X] (Bad) congestion control
 - [X] Compatibility
+- [ ] Clean code
 
 > [!WARNING]
 > Not ready for use. Work in progress.

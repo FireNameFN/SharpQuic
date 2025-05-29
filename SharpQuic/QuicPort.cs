@@ -18,11 +18,7 @@ internal static class QuicPort {
     static readonly SemaphoreSlim semaphore = new(1, 1);
 
     public static Socket CreateSocket() {
-        Socket socket = new(SocketType.Dgram, ProtocolType.Udp);
-
-        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReceiveBuffer, 1 << 24);
-
-        return socket;
+        return new(SocketType.Dgram, ProtocolType.Udp);
     }
 
     public static async Task SubscribeAsync(QuicConnection connection, IPEndPoint local, bool listener) {

@@ -31,7 +31,7 @@ public sealed class ProbeTimeoutTimer {
                 }
 
                 if(next <= min) {
-                    if(connection.debugLogging)
+                    //if(connection.debugLogging)
                         Console.WriteLine("Probe");
 
                     if(connection.initialStage?.ProbeTimeout <= min)
