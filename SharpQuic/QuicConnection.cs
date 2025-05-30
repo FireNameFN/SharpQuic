@@ -247,8 +247,8 @@ public sealed class QuicConnection : IAsyncDisposable {
         return SendAsync(packetWriter);
     }
 
-    internal Task StreamPacketLostAsync(uint number, ulong streamId) {
-        return streams[streamId].PacketLostAsync(new(this), number); // TODO
+    internal ValueTask StreamPacketLostAsync(uint number, ulong streamId) {
+        return streams[streamId].PacketLostAsync(number);
     }
 
     internal void StreamPacketAck(uint number, ulong streamId) {
@@ -559,6 +559,8 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         openBidirectionalStreamSemaphore.Dispose();
         openUnidirectionalStreamSemaphore.Dispose();
+
+        channel.Writer.Complete();
 
         await QuicPort.UnsubscribeAsync(this);
 

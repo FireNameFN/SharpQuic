@@ -13,9 +13,9 @@ namespace SharpQuic.Tests;
 public class QuicStreamTests {
     [Test, Explicit]
     public async Task QuicStreamTestAsync() {
-        CancellationTokenSource timeoutSource = new(30000);
+        CancellationTokenSource timeoutSource = new(60000);
 
-        byte[] data = new byte[(1 << 20) * 10];
+        byte[] data = new byte[(1 << 20) * 100];
 
         RandomNumberGenerator.Fill(data);
 
@@ -39,9 +39,11 @@ public class QuicStreamTests {
 
                 long time = Stopwatch.GetTimestamp();
 
-                for(int i = 0; i < 10; i++) {
+                for(int i = 0; i < 100; i++) {
                     Console.WriteLine(i);
                     Console.WriteLine((Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency);
+                    Console.WriteLine(client.applicationStage.congestionWindow);
+                    Console.WriteLine();
                     await stream.WriteAsync(data.AsMemory().Slice((1 << 20) * i, 1 << 20));
                 }
 
@@ -122,6 +124,8 @@ public class QuicStreamTests {
                 for(int i = 0; i < 256; i++) {
                     Console.WriteLine(i);
                     Console.WriteLine((Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency);
+                    Console.WriteLine(client.applicationStage.congestionWindow);
+                    Console.WriteLine();
                     await stream.WriteAsync(data.AsMemory().Slice(1024 * 40 * i, 1024 * 40));
                 }
 

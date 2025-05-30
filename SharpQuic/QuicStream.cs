@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using SharpQuic.IO;
 
@@ -36,6 +37,8 @@ public sealed class QuicStream {
     readonly SemaphoreSlim availableSemaphore = new(0, 1);
 
     readonly SemaphoreSlim outputSemaphore = new(1, 1);
+
+    readonly Channel<PacketInfo> lostPackets = Channel.CreateUnbounded<PacketInfo>(new() { SingleReader = true, SingleWriter = true });
 
     ulong offset;
 
@@ -73,6 +76,21 @@ public sealed class QuicStream {
 
             return SendMaxStreamData(packetWriter).AsTask();
         };
+
+        Task.Run(Runner);
+    }
+
+    async Task Runner() {
+        PacketWriter packetWriter = new(Connection);
+
+        while(await lostPackets.Reader.WaitToReadAsync()) {
+            PacketInfo packet = await lostPackets.Reader.ReadAsync();
+
+            if(!packet.Data)
+                await SendMaxStreamData(packetWriter).AsTask();
+            else
+                await SendStreamAsync(packetWriter, packet.Offset, packet.Length, packet.Fin);
+        }
     }
 
     public async Task WriteAsync(ReadOnlyMemory<byte> data, bool close = false) {
@@ -214,16 +232,18 @@ public sealed class QuicStream {
         CheckClosed();
     }
 
-    internal Task PacketLostAsync(PacketWriter packetWriter, uint number) {
+    internal ValueTask PacketLostAsync(uint number) {
         PacketInfo packet;
 
         lock(packets)
             packets.Remove(number, out packet);
 
-        if(!packet.Data)
-            return SendMaxStreamData(packetWriter).AsTask();
+        //if(!packet.Data)
+        //    return SendMaxStreamData(packetWriter).AsTask();
 
-        return SendStreamAsync(packetWriter, packet.Offset, packet.Length, packet.Fin);
+        //return SendStreamAsync(packetWriter, packet.Offset, packet.Length, packet.Fin);
+
+        return lostPackets.Writer.WriteAsync(packet);
     }
 
     async Task SendStreamAsync(PacketWriter packetWriter, ulong offset, int length, bool fin) {
@@ -279,6 +299,8 @@ public sealed class QuicStream {
     internal void Dispose() {
         if(Connection.debugLogging)
             Console.WriteLine($"STREAM {Id} DISPOSE");
+
+        lostPackets.Writer.Complete();
 
         inputStream.Dispose();
 

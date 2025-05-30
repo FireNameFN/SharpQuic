@@ -54,7 +54,7 @@ public sealed class Stage {
     int smoothedRtt = InitialRtt;
     int rttVar = InitialRtt / 2;
 
-    double congestionWindow = InitialCongestionWindow;
+    internal double congestionWindow = InitialCongestionWindow;
     double maxCongestionWindow = InitialCongestionWindow;
     double slowStartThreshold = int.MaxValue;
     long epochStartTime = -1;
@@ -70,7 +70,7 @@ public sealed class Stage {
     const int InitialCongestionWindow = 10;
     const int MinCongestionWindow = 2;
 
-    const int MaxSegmentSize = 1200;
+    const int MaxSegmentSize = 1470;
 
     int bytesInFlight;
 
@@ -104,6 +104,8 @@ public sealed class Stage {
 
         bool ackEliciting = false;
 
+        int bytesAcked = 0;
+
         int FindInFlightPacket(uint number) {
             for(int i = 0; i < inFlightPackets.Count; i++)
                 if(inFlightPackets[i].Number == number)
@@ -118,7 +120,7 @@ public sealed class Stage {
 
             ackEliciting |= inFlightPackets[index].AckEliciting;
 
-            bytesInFlight -= inFlightPackets[index].Length;
+            bytesAcked += inFlightPackets[index].Length;
             
             bool exists;
             PacketInfo packet;
@@ -176,6 +178,8 @@ public sealed class Stage {
                 FindAndRemoveInFlightPacket(frame.LargestAcknowledged - back);
         }
 
+        bytesInFlight -= bytesAcked;
+
         if(ackEliciting)
             CalculateProbeTimeout();
 
@@ -220,15 +224,10 @@ public sealed class Stage {
 
         if(type == StageType.Application) {
             if(congestionWindow < slowStartThreshold) {
-                congestionWindow++;
+                congestionWindow += (double)bytesAcked / MaxSegmentSize;
             } else {
                 if(epochStartTime < 0) {
                     epochStartTime = time;
-
-                    /*if(congestionWindow < maxCongestionWindow)
-                        congestionK = Math.Cbrt(maxCongestionWindow * (1 - Beta) / CongestionConstant);
-                    else
-                        congestionK = 0; // TODO need?*/
 
                     congestionK = Math.Cbrt((maxCongestionWindow - congestionWindow) / CongestionConstant);
                 }
@@ -243,20 +242,10 @@ public sealed class Stage {
 
                 if(window < congestionWindow)
                     target = congestionWindow;
-                else {
-                    double thcw = congestionWindow * 1.5;
-
-                    if(window > thcw)
-                        target = thcw;
-                    else
-                        target = window;
-                }
+                else
+                    target = Math.Min(congestionWindow * 1.5, window);
 
                 congestionWindow += (target - congestionWindow) / congestionWindow;
-
-                //Console.WriteLine($"WND: {congestionWindow}. SRTT: {smoothedRtt}");
-
-                //congestionWindow = Math.Max(window, congestionWindow);
             }
         }
 
@@ -277,8 +266,6 @@ public sealed class Stage {
             if((time - packet.SendTime) * 1000 / Stopwatch.Frequency < threshold)
                 continue;
 
-            //await PacketLostAsync(packet.Number);
-
             lostPackets.Add(packet.Number);
 
             bytesInFlight -= packet.Length;
@@ -292,11 +279,6 @@ public sealed class Stage {
         inFlightSemaphore.Release();
 
         if(type == StageType.Application && lostPackets.Count > 0 && largestAcknowledged >= recovery) {
-            /*maxCongestionWindow = congestionWindow;
-            congestionWindow = (int)(congestionWindow * Beta);
-            slowStartThreshold = Math.Max(congestionWindow, 2);
-            epochStartTime = -1;*/
-
             maxCongestionWindow = congestionWindow;
 
             //slowStartThreshold = Math.Max((double)bytesInFlight / MaxSegmentSize * Beta, 2);
@@ -308,7 +290,8 @@ public sealed class Stage {
             recovery = nextPacketNumber;
 
             //Console.WriteLine($"Lost {lostPackets.Count} packets. SRTT: {smoothedRtt}. Max: {maxCongestionWindow:F2}. CWND: {congestionWindow:F2}. Time: {(Stopwatch.GetTimestamp() - this.time) * 1000 / Stopwatch.Frequency}");
-        }
+        }// else if(type == StageType.Application && lostPackets.Count > 0)
+        //    Console.WriteLine($"Lost {lostPackets.Count} packets. SRTT: {smoothedRtt}. CWND: {congestionWindow:F2}. Time: {(Stopwatch.GetTimestamp() - this.time) * 1000 / Stopwatch.Frequency}");
 
         if(congestionSemaphore.CurrentCount < 1)
             congestionSemaphore.Release();
@@ -349,13 +332,8 @@ public sealed class Stage {
             if(connection.debugLogging)
                 Console.WriteLine($"{connection.number} {stage}: Packet lost: {number} that {(exists ? "exists" : "doesn't exists")}");
 
-            if(packet.Type == PacketInfoType.Stream) {
-                //return connection.StreamPacketLostAsync(number, packet.StreamId);
-
-                Task.Run(() => connection.StreamPacketLostAsync(number, packet.StreamId));
-
-                return Task.CompletedTask;
-            }
+            if(packet.Type == PacketInfoType.Stream)
+                return connection.StreamPacketLostAsync(number, packet.StreamId).AsTask();
 
             if(packet.Type == PacketInfoType.Crypto)
                 WriteCrypto(packetWriter, packet.Offset, packet.Length, packet.Token);
