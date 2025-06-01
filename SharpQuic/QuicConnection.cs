@@ -197,7 +197,7 @@ public sealed class QuicConnection : IAsyncDisposable {
     internal void StreamClosed(ulong id) {
         streams.Remove(id, out QuicStream stream);
 
-        if(stream.Client == (endpointType == EndpointType.Client))
+        if(stream.Outside)
             if(stream.Bidirectional)
                 maxBidirectionalStreams++;
             else

@@ -18,9 +18,13 @@ public sealed class QuicStream {
 
     public bool Unidirectional => (Id & 0b10) != 0;
 
-    public bool CanRead => Connection.endpointType == EndpointType.Client != Client || Bidirectional;
+    public bool Inside => Connection.endpointType == EndpointType.Client == Client;
 
-    public bool CanWrite => Connection.endpointType == EndpointType.Client == Client || Bidirectional;
+    public bool Outside => Connection.endpointType == EndpointType.Client != Client;
+
+    public bool CanRead => Outside || Bidirectional;
+
+    public bool CanWrite => Inside || Bidirectional;
 
     public QuicConnection Connection { get; }
 
@@ -61,7 +65,7 @@ public sealed class QuicStream {
         
         closed = !CanWrite;
 
-        declaredOpen = Connection.endpointType == EndpointType.Client != Client || !Bidirectional;
+        declaredOpen = Outside;
 
         packetWriter = new(connection);
 
