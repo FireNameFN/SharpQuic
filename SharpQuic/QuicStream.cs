@@ -69,6 +69,8 @@ public sealed class QuicStream {
 
         packetWriter = new(connection);
 
+        PacketWriter maxDataPacketWriter = new(connection);
+
         inputStream.MaxDataIncreased += () => {
             if(peerClosed)
                 return Task.CompletedTask;
@@ -78,7 +80,7 @@ public sealed class QuicStream {
 
             sentMaxData = inputStream.MaxData;
 
-            return SendMaxStreamData(packetWriter).AsTask();
+            return SendMaxStreamData(maxDataPacketWriter).AsTask();
         };
 
         Task.Run(Runner);
@@ -91,7 +93,7 @@ public sealed class QuicStream {
             PacketInfo packet = await lostPackets.Reader.ReadAsync();
 
             if(!packet.Data)
-                await SendMaxStreamData(packetWriter).AsTask();
+                await SendMaxStreamData(packetWriter);
             else
                 await SendStreamAsync(packetWriter, packet.Offset, packet.Length, packet.Fin);
         }
@@ -253,7 +255,7 @@ public sealed class QuicStream {
     async Task SendStreamAsync(PacketWriter packetWriter, ulong offset, int length, bool fin) {
         byte[] data = new byte[length]; // TODO .NET 9
 
-        outputSemaphore.Wait(Connection.connectionSource.Token);
+        await outputSemaphore.WaitAsync(Connection.connectionSource.Token);
         outputStream.Read(data, offset);
         outputSemaphore.Release();
 
@@ -266,7 +268,7 @@ public sealed class QuicStream {
         if(Connection.debugLogging)
             Console.WriteLine($"WRITE STREAM {number} TO {offset + (ulong)length}");
 
-        int dataLength = packetWriter.Write(PacketType.OneRtt, number, null);
+        int dataLength = packetWriter.Write(PacketType.OneRtt, number);
 
         await Connection.applicationStage.WaitForCongestion(dataLength);
 
@@ -285,7 +287,7 @@ public sealed class QuicStream {
 
         uint number = Connection.applicationStage.GetNextPacketNumber(Id);
 
-        int dataLength = packetWriter.Write(PacketType.OneRtt, number, null);
+        int dataLength = packetWriter.Write(PacketType.OneRtt, number);
 
         Connection.applicationStage.AddInFlightPacket(number, true, dataLength);
 
