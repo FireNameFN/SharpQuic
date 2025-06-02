@@ -197,15 +197,16 @@ public sealed class QuicConnection : IAsyncDisposable {
     internal void StreamClosed(ulong id) {
         streams.Remove(id, out QuicStream stream);
 
-        if(stream.Outside)
+        if(stream.Outside) {
             if(stream.Bidirectional)
                 maxBidirectionalStreams++;
             else
                 maxUnidirectionalStreams++;
 
-        stream.Dispose();
+            writeMaxStreams = true;
+        }
 
-        writeMaxStreams = true;
+        stream.Dispose();
     }
 
     internal ValueTask<int> SendAsync(PacketWriter packetWriter) {
