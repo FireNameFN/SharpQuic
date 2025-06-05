@@ -16,7 +16,7 @@ using SharpQuic.Tls.Enums;
 
 namespace SharpQuic;
 
-public sealed class QuicConnection : IAsyncDisposable {
+public sealed class QuicConnection : IDisposable {
     internal Socket socket;
 
     readonly TlsClient tlsClient;
@@ -168,7 +168,7 @@ public sealed class QuicConnection : IAsyncDisposable {
         await connection.ready.Task.WaitAsync(configuration.HandshakeTimeout, configuration.CancellationToken);
 
         if(!connection.ready.Task.IsCompleted) {
-            await connection.DisposeAsync();
+            connection.Dispose();
 
             throw new QuicException();
         }
@@ -190,7 +190,7 @@ public sealed class QuicConnection : IAsyncDisposable {
         await connection.ready.Task.WaitAsync(configuration.HandshakeTimeout, configuration.CancellationToken);
 
         if(!connection.ready.Task.IsCompleted) {
-            await connection.DisposeAsync();
+            connection.Dispose();
 
             throw new QuicException();
         }
@@ -505,7 +505,7 @@ public sealed class QuicConnection : IAsyncDisposable {
                         await SendAsync(packetWriter);
                     }
 
-                    await DisposeAsync();
+                    Dispose();
 
                     break;
                 case HandshakeDoneFrame:
@@ -691,7 +691,7 @@ public sealed class QuicConnection : IAsyncDisposable {
         }
     }
 
-    public ValueTask DisposeAsync() {
+    public void Dispose() {
         state = State.Draining;
 
         connectionSource.Cancel();
@@ -702,10 +702,10 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         channel.Writer.Complete();
 
+        QuicPort.Unsubscribe(this);
+
         foreach(QuicStream stream in streams.Values)
             stream.Dispose();
-
-        return new(QuicPort.UnsubscribeAsync(this));
     }
 
     internal enum State {

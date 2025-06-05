@@ -34,7 +34,7 @@ public sealed class ProbeTimeoutTimer {
 
                 if(next <= min) {
                     if(connection.timeoutTimer <= min) {
-                        await connection.DisposeAsync();
+                        connection.Dispose();
 
                         return;
                     }

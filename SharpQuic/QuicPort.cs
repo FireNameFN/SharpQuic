@@ -69,14 +69,10 @@ static class QuicPort {
         _ = Task.Run(() => Runner(socket));
     }
 
-    public static async Task UnsubscribeAsync(QuicConnection connection) {
-        await semaphore.WaitAsync();
-
+    public static void Unsubscribe(QuicConnection connection) {
         connections.Remove(connection);
 
         listeners.Remove(connection);
-
-        semaphore.Release();
     }
 
     public static void UnsubscribeListener() {
