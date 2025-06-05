@@ -1,3 +1,4 @@
+using System;
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
@@ -18,6 +19,8 @@ public readonly struct QuicConfiguration() {
     public X509ChainPolicy ChainPolicy { get; init; }
 
     public QuicTransportParameters Parameters { get; init; } = new();
+
+    public TimeSpan HandshakeTimeout { get; init; } = TimeSpan.FromMilliseconds(15000);
 
     public CancellationToken CancellationToken { get; init; }
 

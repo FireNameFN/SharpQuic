@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 
 namespace SharpQuic;
 
@@ -107,6 +108,36 @@ public sealed class FrameWriter {
         Serializer.WriteVariableLength(stream, (ulong)(bidirectional ? FrameType.MaxStreamsBidirectional : FrameType.MaxStreamsUnidirectional));
 
         Serializer.WriteVariableLength(stream, maxStreams);
+    }
+
+    public void WriteConnectionClose(ulong errorCode, ulong frameType, ReadOnlySpan<char> reasonPhrase) {
+        Serializer.WriteVariableLength(stream, (ulong)FrameType.ConnectionClose);
+
+        Serializer.WriteVariableLength(stream, errorCode);
+
+        Serializer.WriteVariableLength(stream, frameType);
+
+        Span<byte> span = stackalloc byte[Encoding.UTF8.GetMaxByteCount(reasonPhrase.Length)];
+
+        int length = Encoding.UTF8.GetBytes(reasonPhrase, span);
+
+        Serializer.WriteVariableLength(stream, (ulong)length);
+
+        stream.Write(span[..length]);
+    }
+
+    public void WriteConnectionClose(ulong errorCode, ReadOnlySpan<char> reasonPhrase) {
+        Serializer.WriteVariableLength(stream, (ulong)FrameType.ConnectionClose2);
+
+        Serializer.WriteVariableLength(stream, errorCode);
+
+        Span<byte> span = stackalloc byte[Encoding.UTF8.GetMaxByteCount(reasonPhrase.Length)];
+
+        int length = Encoding.UTF8.GetBytes(reasonPhrase, span);
+
+        Serializer.WriteVariableLength(stream, (ulong)length);
+
+        stream.Write(span[..length]);
     }
 
     public void WriteHandshakeDone() {

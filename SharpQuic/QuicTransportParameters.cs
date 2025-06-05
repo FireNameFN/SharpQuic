@@ -5,6 +5,8 @@ public class QuicTransportParameters() {
 
     public byte[] InitialSourceConnectionId { get; set; }
 
+    public ulong MaxIdleTimeout { get; set; } = 30000;
+
     public ulong InitialMaxData { get; set; } = (1u << 63) - 1;
 
     public ulong InitialMaxStreamDataBidiLocal { get; set; } = 1 << 20;

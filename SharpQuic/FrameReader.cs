@@ -139,21 +139,26 @@ public sealed class FrameReader {
         return new NewConnectionIdFrame();
     }
 
-    Frame ReadConnectionClose(bool application) {
-        ulong error = Serializer.ReadVariableLength(stream).Value;
+    ConnectionCloseFrame ReadConnectionClose(bool application) {
+        ulong errorCode = Serializer.ReadVariableLength(stream).Value;
+
         FrameType frameType = 0;
+        
         if(!application)
             frameType = (FrameType)Serializer.ReadVariableLength(stream).Value;
+
         ulong phraseLength = Serializer.ReadVariableLength(stream).Value;
 
         Span<byte> phrase = stackalloc byte[(int)phraseLength];
 
         stream.ReadExactly(phrase);
 
-        Console.WriteLine($"CONNECTION_CLOSE: {error} {frameType} {Encoding.UTF8.GetString(phrase)}");
+        Console.WriteLine($"CONNECTION_CLOSE: {errorCode} {frameType} {Encoding.UTF8.GetString(phrase)}");;
 
-        throw new QuicException();
-
-        //return new(FrameType.ConnectionClose, null);
+        return new() {
+            ErrorCode = errorCode,
+            FrameType = frameType,
+            ReasonPhrase = Encoding.UTF8.GetString(phrase)
+        };
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -41,6 +42,12 @@ public sealed class QuicConnection : IAsyncDisposable {
     internal readonly byte[] sourceConnectionId;
 
     internal byte[] destinationConnectionId;
+
+    ulong maxIdleTimeout;
+
+    bool ackElicitingSended;
+
+    internal long timeoutTimer;
 
     readonly TaskCompletionSource ready = new();
 
@@ -90,6 +97,10 @@ public sealed class QuicConnection : IAsyncDisposable {
 
     internal int number;
 
+    ulong errorCode;
+
+    ReadOnlyMemory<char> reasonPhrase;
+
     internal QuicConnection(EndpointType endpointType, QuicConfiguration configuration) {
         this.endpointType = endpointType;
         protection = new(endpointType, configuration.Parameters.InitialSourceConnectionId);
@@ -104,12 +115,14 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         tlsClient = new(configuration.Parameters, configuration.Protocols, configuration.CertificateChain, configuration.ChainPolicy);
 
-        connectionSource = CancellationTokenSource.CreateLinkedTokenSource(configuration.CancellationToken);
+        connectionSource = new();
 
         timer = new(this);
 
         sourceConnectionId = configuration.Parameters.InitialSourceConnectionId;
         destinationConnectionId = RandomNumberGenerator.GetBytes(8);
+
+        maxIdleTimeout = configuration.Parameters.MaxIdleTimeout;
 
         debugLogging = configuration.DebugLogging;
 
@@ -147,7 +160,13 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         connection.timer.Start();
 
-        await connection.ready.Task.WaitAsync(configuration.CancellationToken);
+        await connection.ready.Task.WaitAsync(configuration.HandshakeTimeout, configuration.CancellationToken);
+
+        if(!connection.ready.Task.IsCompleted) {
+            await connection.DisposeAsync();
+
+            throw new QuicException();
+        }
 
         return connection;
     }
@@ -161,7 +180,13 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         await QuicPort.SubscribeAsync(connection, configuration.LocalPoint, true);
 
-        await connection.ready.Task.WaitAsync(configuration.CancellationToken);
+        await connection.ready.Task.WaitAsync(/*configuration.HandshakeTimeout, */configuration.CancellationToken);
+
+        if(!connection.ready.Task.IsCompleted) {
+            await connection.DisposeAsync();
+
+            throw new QuicException();
+        }
 
         return connection;
     }
@@ -257,6 +282,28 @@ public sealed class QuicConnection : IAsyncDisposable {
             stream.PacketAck(number);
     }
 
+    internal void OnSendAckElicitingPacket(long time) {
+        if(ackElicitingSended)
+            return;
+
+        ackElicitingSended = true;
+
+        CalculateTimeoutTimer(time);
+    }
+
+    void CalculateTimeoutTimer(long time) {
+        if(maxIdleTimeout < 1)
+            timeoutTimer = long.MaxValue;
+
+        timeoutTimer = time * 1000 / Stopwatch.Frequency + (long)maxIdleTimeout;
+    }
+
+    async Task SendClientHelloAsync(byte[] token = null) {
+        await initialStage.WriteCryptoAsync(packetWriter, tlsClient.SendClientHello(), token ?? []);
+
+        await FlushAsync();
+    }
+
     internal async Task ReceiveAsync(IPEndPoint point, byte[] data, int length) {
         if(Random.Shared.NextDouble() < debugInputPacketLoss) {
             if(debugLogging)
@@ -316,6 +363,12 @@ public sealed class QuicConnection : IAsyncDisposable {
     }
 
     async Task HandlePacketAsync(Packet packet) {
+        long time = Stopwatch.GetTimestamp();
+
+        ackElicitingSended = false;
+
+        CalculateTimeoutTimer(time);
+
         if(packet is RetryPacket retryPacket) {
             await SendClientHelloAsync(retryPacket.Token);
 
@@ -342,6 +395,7 @@ public sealed class QuicConnection : IAsyncDisposable {
                 case null:
                 case FrameType.Ack:
                 case FrameType.ConnectionClose:
+                case FrameType.ConnectionClose2:
                     break;
                 default:
                     ackEliciting = true;
@@ -352,13 +406,13 @@ public sealed class QuicConnection : IAsyncDisposable {
                 case AckFrame ackFrame:
                     switch(packet.PacketType) {
                         case PacketType.Initial:
-                            await initialStage.PeerAckAsync(packetWriter, ackFrame);
+                            await initialStage.PeerAckAsync(packetWriter, ackFrame, time);
                             break;
                         case PacketType.Handshake:
-                            await handshakeStage.PeerAckAsync(packetWriter, ackFrame);
+                            await handshakeStage.PeerAckAsync(packetWriter, ackFrame, time);
                             break;
                         case PacketType.OneRtt:
-                            await applicationStage.PeerAckAsync(packetWriter, ackFrame);
+                            await applicationStage.PeerAckAsync(packetWriter, ackFrame, time);
                             break;
                     }
 
@@ -420,6 +474,28 @@ public sealed class QuicConnection : IAsyncDisposable {
                     //destinationConnectionId = frame.Data;
 
                     break;
+                case ConnectionCloseFrame:
+                    if(initialStage is not null) {
+                        initialStage.WriteConnectionClose(packetWriter, 0, []);
+
+                        await SendAsync(packetWriter);
+                    }
+
+                    if(handshakeStage is not null) {
+                        handshakeStage.WriteConnectionClose(packetWriter, 0, []);
+
+                        await SendAsync(packetWriter);
+                    }
+
+                    if(applicationStage is not null) {
+                        applicationStage.WriteConnectionClose(packetWriter, 0, []);
+
+                        await SendAsync(packetWriter);
+                    }
+
+                    await DisposeAsync();
+
+                    break;
                 case HandshakeDoneFrame:
                     handshakeStage = null;
 
@@ -441,6 +517,22 @@ public sealed class QuicConnection : IAsyncDisposable {
                 applicationStage.Ack(packet.PacketNumber, ackEliciting);
                 break;
         }
+
+        if(state == State.Closing) {
+            switch(packet.PacketType) {
+                case PacketType.Initial:
+                    initialStage.WriteConnectionClose(packetWriter, errorCode, reasonPhrase.Span);
+                    break;
+                case PacketType.Handshake:
+                    handshakeStage.WriteConnectionClose(packetWriter, errorCode, reasonPhrase.Span);
+                    break;
+                case PacketType.OneRtt:
+                    applicationStage.WriteConnectionClose(packetWriter, errorCode, reasonPhrase.Span);
+                    break;
+            }
+
+            await SendAsync(packetWriter);
+        }
     }
 
     async Task HandleHandshakeAsync() {
@@ -450,11 +542,16 @@ public sealed class QuicConnection : IAsyncDisposable {
             };
 
             if(endpointType == EndpointType.Server) {
-                initialStage.CalculateProbeTimeout();
+                initialStage.CalculateProbeTimeout(Stopwatch.GetTimestamp());
 
                 timer.Start();
 
                 peerParameters = tlsClient.PeerParameters;
+
+                maxIdleTimeout = Math.Min(parameters.MaxIdleTimeout, peerParameters.MaxIdleTimeout);
+
+                if(maxIdleTimeout < 1)
+                    maxIdleTimeout = Math.Max(parameters.MaxIdleTimeout, peerParameters.MaxIdleTimeout);
 
                 initialStage.AckDelayExponent = peerParameters.AckDelayExponent;
                 handshakeStage.AckDelayExponent = peerParameters.AckDelayExponent;
@@ -508,6 +605,11 @@ public sealed class QuicConnection : IAsyncDisposable {
             if(endpointType == EndpointType.Client) {
                 peerParameters = tlsClient.PeerParameters;
 
+                maxIdleTimeout = Math.Min(parameters.MaxIdleTimeout, peerParameters.MaxIdleTimeout);
+
+                if(maxIdleTimeout < 1)
+                    maxIdleTimeout = Math.Max(parameters.MaxIdleTimeout, peerParameters.MaxIdleTimeout);
+
                 handshakeStage.AckDelayExponent = peerParameters.AckDelayExponent;
                 applicationStage.AckDelayExponent = peerParameters.AckDelayExponent;
 
@@ -548,30 +650,57 @@ public sealed class QuicConnection : IAsyncDisposable {
         }
     }
 
-    async Task SendClientHelloAsync(byte[] token = null) {
-        await initialStage.WriteCryptoAsync(packetWriter, tlsClient.SendClientHello(), token ?? []);
+    public async Task CloseAsync(ulong errorCode, ReadOnlyMemory<char> reasonPhrase) {
+        this.errorCode = errorCode;
+        this.reasonPhrase = reasonPhrase;
 
-        await FlushAsync();
+        state = State.Closing;
+
+        PacketWriter packetWriter = new(this);
+
+        if(initialStage is not null) {
+            initialStage.WriteConnectionClose(packetWriter, errorCode, reasonPhrase.Span);
+
+            await SendAsync(packetWriter);
+        }
+
+        if(handshakeStage is not null) {
+            handshakeStage.WriteConnectionClose(packetWriter, errorCode, reasonPhrase.Span);
+
+            await SendAsync(packetWriter);
+        }
+
+        if(applicationStage is not null) {
+            applicationStage.WriteConnectionClose(packetWriter, errorCode, reasonPhrase.Span);
+
+            Console.WriteLine(packetWriter.Length);
+
+            await SendAsync(packetWriter);
+        }
     }
 
-    public async ValueTask DisposeAsync() {
+    public ValueTask DisposeAsync() {
+        state = State.Draining;
+
         connectionSource.Cancel();
         connectionSource.Dispose();
 
-        openBidirectionalStreamSemaphore.Dispose();
-        openUnidirectionalStreamSemaphore.Dispose();
+        openBidirectionalStreamSemaphore?.Dispose();
+        openUnidirectionalStreamSemaphore?.Dispose();
 
         channel.Writer.Complete();
 
-        await QuicPort.UnsubscribeAsync(this);
-
         foreach(QuicStream stream in streams.Values)
             stream.Dispose();
+
+        return new(QuicPort.UnsubscribeAsync(this));
     }
 
     internal enum State {
         Initial,
         Handshake,
-        Idle
+        Idle,
+        Closing,
+        Draining
     }
 }

@@ -80,7 +80,7 @@ public sealed class Stage {
 
     uint nextPacketNumber;
 
-    readonly long time = Stopwatch.GetTimestamp();
+    //readonly long time = Stopwatch.GetTimestamp();
 
     internal Stage(QuicConnection connection, StageType type) {
         this.connection = connection;
@@ -89,7 +89,7 @@ public sealed class Stage {
         if(type == StageType.Application)
             ProbeTimeoutEnabled = false;
 
-        CalculateProbeTimeout();
+        CalculateProbeTimeout(Stopwatch.GetTimestamp());
     }
 
     public void Ack(uint packetNumber, bool ackEliciting) {
@@ -99,7 +99,7 @@ public sealed class Stage {
         this.ackEliciting |= ackEliciting;
     }
 
-    public async Task PeerAckAsync(PacketWriter packetWriter, AckFrame frame) {
+    public async Task PeerAckAsync(PacketWriter packetWriter, AckFrame frame, long time) {
         await inFlightSemaphore.WaitAsync();
 
         bool ackEliciting = false;
@@ -181,7 +181,7 @@ public sealed class Stage {
         bytesInFlight -= bytesAcked;
 
         if(ackEliciting)
-            CalculateProbeTimeout();
+            CalculateProbeTimeout(time);
 
         bool first = latestRtt < 0;
 
@@ -219,8 +219,6 @@ public sealed class Stage {
                 }
             }
         }
-
-        long time = Stopwatch.GetTimestamp();
 
         if(type == StageType.Application) {
             if(congestionWindow < slowStartThreshold) {
@@ -352,12 +350,12 @@ public sealed class Stage {
         //Console.WriteLine($"Waiting {bytesInFlight} + {length} > {congestionWindow * MaxSegmentSize}");
 
         while(bytesInFlight + length > congestionWindow * MaxSegmentSize)
-            await congestionSemaphore.WaitAsync();
+            await congestionSemaphore.WaitAsync(connection.connectionSource.Token);
 
         //Console.WriteLine($"Waited");
     }
 
-    public uint GetNextPacketNumber(bool ackEliciting) {
+    public uint GetNextPacketNumber() {
         uint number = Interlocked.Increment(ref nextPacketNumber);
 
         if(connection.debugLogging)
@@ -376,7 +374,7 @@ public sealed class Stage {
     }
 
     public uint GetNextPacketNumber(ulong streamId) {
-        uint number = GetNextPacketNumber(true);
+        uint number = GetNextPacketNumber();
         
         lock(packets)
             packets.Add(number, new(PacketInfoType.Stream, PacketType.OneRtt, null, streamId, 0, 0, null));
@@ -387,14 +385,19 @@ public sealed class Stage {
     public void AddInFlightPacket(uint number, bool ackEliciting, int length) {
         inFlightSemaphore.Wait();
 
-        inFlightPackets.Add(new(number, ackEliciting, length, Stopwatch.GetTimestamp()));
+        long time = Stopwatch.GetTimestamp();
+
+        inFlightPackets.Add(new(number, ackEliciting, length, time));
 
         bytesInFlight += length;
 
         inFlightSemaphore.Release();
 
-        if(ackEliciting)
-            CalculateProbeTimeout();
+        if(ackEliciting) {
+            CalculateProbeTimeout(time);
+
+            connection.OnSendAckElicitingPacket(time);
+        }
     }
 
     public async Task WriteCryptoAsync(PacketWriter packetWriter, byte[] data, byte[] token = null) {
@@ -428,7 +431,7 @@ public sealed class Stage {
         else
             packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = GetNextPacketNumber(true);
+        uint number = GetNextPacketNumber();
 
         if(connection.debugLogging)
             Console.WriteLine($"Crypto {type}");
@@ -463,7 +466,7 @@ public sealed class Stage {
 
         packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = GetNextPacketNumber(false);
+        uint number = GetNextPacketNumber();
 
         PacketType packetType = type switch {
             StageType.Initial => PacketType.Initial,
@@ -485,7 +488,7 @@ public sealed class Stage {
 
         packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = GetNextPacketNumber(true);
+        uint number = GetNextPacketNumber();
 
         lock(packets)
             packets.Add(number, new(PacketInfoType.MaxStreams, PacketType.OneRtt, null, 0, 0, 0, null));
@@ -519,7 +522,7 @@ public sealed class Stage {
 
         packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = GetNextPacketNumber(true);
+        uint number = GetNextPacketNumber();
 
         if(connection.debugLogging)
             Console.WriteLine($"Probe {type}");
@@ -538,12 +541,33 @@ public sealed class Stage {
         AddInFlightPacket(number, true, length);
     }
 
+    public void WriteConnectionClose(PacketWriter packetWriter, ulong errorCode, ReadOnlySpan<char> reasonPhrase) {
+        packetWriter.FrameWriter.WriteConnectionClose(errorCode, reasonPhrase);
+
+        packetWriter.FrameWriter.WritePaddingUntil(20);
+
+        uint number = GetNextPacketNumber();
+
+        PacketType packetType = type switch {
+            StageType.Initial => PacketType.Initial,
+            StageType.Handshake => PacketType.Handshake,
+            _ => PacketType.OneRtt
+        };
+
+        lock(packets)
+            packets.Add(number, new(PacketInfoType.ConnectionClose, packetType, null, 0, 0, 0, null));
+
+        int length = packetWriter.Write(packetType, number);
+
+        AddInFlightPacket(number, false, length);
+    }
+
     public void WriteHandshakeDone(PacketWriter packetWriter) {
         packetWriter.FrameWriter.WriteHandshakeDone();
 
         packetWriter.FrameWriter.WritePaddingUntil(20);
 
-        uint number = GetNextPacketNumber(true);
+        uint number = GetNextPacketNumber();
 
         PacketType packetType = type switch {
             StageType.Initial => PacketType.Initial,
@@ -559,14 +583,14 @@ public sealed class Stage {
         AddInFlightPacket(number, true, length);
     }
 
-    public void CalculateProbeTimeout() {
+    public void CalculateProbeTimeout(long time) {
         if(!ProbeTimeoutEnabled)
             ProbeTimeout = long.MaxValue;
 
         if(connection.debugLogging)
             Console.WriteLine(smoothedRtt + Math.Max(rttVar * 4, Granularity) + (type == StageType.Application ? MaxAckDelay : 0));
 
-        ProbeTimeout = (Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency) + smoothedRtt + Math.Max(rttVar * 4, Granularity) + (type == StageType.Application ? MaxAckDelay : 0);
+        ProbeTimeout = time * 1000 / Stopwatch.Frequency + smoothedRtt + Math.Max(rttVar * 4, Granularity) + (type == StageType.Application ? MaxAckDelay : 0);
     }
 
     readonly record struct InFlightPacket(uint Number, bool AckEliciting, int Length, long SendTime);
@@ -578,6 +602,7 @@ public sealed class Stage {
         Crypto,
         Stream,
         MaxStreams,
+        ConnectionClose,
         HandshakeDone
     }
 }

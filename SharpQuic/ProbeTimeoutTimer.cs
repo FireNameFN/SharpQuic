@@ -22,8 +22,10 @@ public sealed class ProbeTimeoutTimer {
         try {
             long min = 0;
 
-            while(!connection.connectionSource.IsCancellationRequested) {
+            while(connection.state <= QuicConnection.State.Idle) {
                 long next = Math.Min(connection.initialStage?.ProbeTimeout ?? long.MaxValue, Math.Min(connection.handshakeStage?.ProbeTimeout ?? long.MaxValue, connection.applicationStage?.ProbeTimeout ?? long.MaxValue));
+
+                next = Math.Min(next, connection.timeoutTimer);
 
                 if(connection.debugLogging) {
                     Console.WriteLine($"Initial: {connection.initialStage?.ProbeTimeout}. Handshake: {connection.handshakeStage?.ProbeTimeout}. Application: {connection.applicationStage?.ProbeTimeout}");
@@ -31,6 +33,12 @@ public sealed class ProbeTimeoutTimer {
                 }
 
                 if(next <= min) {
+                    if(connection.timeoutTimer <= min) {
+                        await connection.DisposeAsync();
+
+                        return;
+                    }
+
                     if(connection.debugLogging)
                         Console.WriteLine("Probe");
 

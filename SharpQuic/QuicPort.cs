@@ -38,8 +38,12 @@ internal static class QuicPort {
         Socket GetSocket(IPEndPoint local) {
             ref Socket socket = ref CollectionsMarshal.GetValueRefOrAddDefault(sockets, local, out bool exists);
 
+            Console.WriteLine("Get Socket");
+
             if(exists)
                 return socket;
+
+            Console.WriteLine("Creating new");
 
             socket = CreateSocket();
 
@@ -47,16 +51,16 @@ internal static class QuicPort {
 
             Socket valSocket = socket;
 
-            _ = Task.Run(() => Runner(valSocket));
+            Task.Run(() => Runner(valSocket));
 
             return socket;
         }
     }
 
     public static async Task SubscribeAsync(QuicConnection connection, IPEndPoint local, Socket socket) {
-        sockets[local] = socket;
-
         await semaphore.WaitAsync();
+
+        sockets[local] = socket;
 
         connections.Add(connection);
 
@@ -84,9 +88,15 @@ internal static class QuicPort {
 
         while(true) {
             try {
+                //Console.WriteLine($"Receiving {socket.LocalEndPoint}");
+
                 SocketReceiveFromResult result = await socket.ReceiveFromAsync(data, point);
 
                 //Console.WriteLine($"Time: {(Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency}");
+
+                //Console.WriteLine(result.RemoteEndPoint);
+
+                //Console.WriteLine(result.ReceivedBytes);
 
                 Memory<byte> id;
 
@@ -95,6 +105,8 @@ internal static class QuicPort {
                 else
                     id = data.AsMemory().Slice(1, 20);
 
+                //Console.WriteLine($"Waiting by {socket.LocalEndPoint} {(Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency}");
+
                 await semaphore.WaitAsync();
 
                 bool received = false;
@@ -102,6 +114,8 @@ internal static class QuicPort {
                 foreach(QuicConnection connection in connections) {
                     if(!connection.sourceConnectionId.AsSpan().SequenceEqual(id.Span[..connection.sourceConnectionId.Length]))
                         continue;
+
+                    //Console.WriteLine($"Received {result.ReceivedBytes} {(Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency}");
 
                     await connection.ReceiveAsync((IPEndPoint)result.RemoteEndPoint, data, result.ReceivedBytes);
 
@@ -117,6 +131,8 @@ internal static class QuicPort {
                 }
 
                 semaphore.Release();
+
+                //Console.WriteLine($"Releasing by {socket.LocalEndPoint} {(Stopwatch.GetTimestamp() - time) * 1000 / Stopwatch.Frequency}");
             } catch(Exception e) {
                 Console.WriteLine(e);
             }

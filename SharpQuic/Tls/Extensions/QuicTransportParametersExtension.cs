@@ -14,6 +14,8 @@ public static class QuicTransportParametersExtension {
             parametersStream.Write(parameters.OriginalDestinationConnectionId);
         }
 
+        EncodeParameter(parametersStream, 0x01, parameters.MaxIdleTimeout);
+
         EncodeParameter(parametersStream, 0x04, parameters.InitialMaxData);
 
         EncodeParameter(parametersStream, 0x05, parameters.InitialMaxStreamDataBidiLocal);
@@ -65,6 +67,11 @@ public static class QuicTransportParametersExtension {
             ulong id = Serializer.ReadVariableLength(stream).Value;
 
             switch(id) {
+                case 0x01:
+                    Serializer.ReadVariableLength(stream);
+                    parameters.MaxIdleTimeout = Serializer.ReadVariableLength(stream).Value;
+
+                    break;
                 case 0x04:
                     Serializer.ReadVariableLength(stream);
                     parameters.InitialMaxData = Serializer.ReadVariableLength(stream).Value;
