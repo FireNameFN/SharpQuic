@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace SharpQuic;
 
-internal static class QuicPort {
+static class QuicPort {
     static readonly Dictionary<IPEndPoint, Socket> sockets = [];
 
     static readonly List<QuicConnection> connections = [];
@@ -79,6 +79,10 @@ internal static class QuicPort {
         semaphore.Release();
     }
 
+    public static void UnsubscribeListener() {
+        listeners.RemoveAt(0);
+    }
+
     static async Task Runner(Socket socket) {
         byte[] data = new byte[1500];
 
@@ -124,11 +128,8 @@ internal static class QuicPort {
                     break;
                 }
 
-                if(!received && listeners.Count > 0) {
+                if(!received && listeners.Count > 0)
                     await listeners[0].ReceiveAsync((IPEndPoint)result.RemoteEndPoint, data, result.ReceivedBytes);
-
-                    listeners.RemoveAt(0);
-                }
 
                 semaphore.Release();
 

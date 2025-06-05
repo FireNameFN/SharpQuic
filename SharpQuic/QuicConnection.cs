@@ -49,6 +49,8 @@ public sealed class QuicConnection : IAsyncDisposable {
 
     internal long timeoutTimer;
 
+    readonly TaskCompletionSource connected;
+
     readonly TaskCompletionSource ready = new();
 
     internal readonly CancellationTokenSource connectionSource;
@@ -115,6 +117,9 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         tlsClient = new(configuration.Parameters, configuration.Protocols, configuration.CertificateChain, configuration.ChainPolicy);
 
+        if(endpointType == EndpointType.Server)
+            connected = new();
+
         connectionSource = new();
 
         timer = new(this);
@@ -180,7 +185,9 @@ public sealed class QuicConnection : IAsyncDisposable {
 
         await QuicPort.SubscribeAsync(connection, configuration.LocalPoint, true);
 
-        await connection.ready.Task.WaitAsync(/*configuration.HandshakeTimeout, */configuration.CancellationToken);
+        await connection.connected.Task.WaitAsync(configuration.CancellationToken);
+
+        await connection.ready.Task.WaitAsync(configuration.HandshakeTimeout, configuration.CancellationToken);
 
         if(!connection.ready.Task.IsCompleted) {
             await connection.DisposeAsync();
@@ -378,8 +385,13 @@ public sealed class QuicConnection : IAsyncDisposable {
         if(state == State.Initial && packet is InitialPacket initialPacket) {
             destinationConnectionId = initialPacket.SourceConnectionId;
 
-            if(endpointType == EndpointType.Server)
+            if(endpointType == EndpointType.Server) {
                 parameters.OriginalDestinationConnectionId = packet.DestinationConnectionId;
+
+                QuicPort.UnsubscribeListener();
+
+                connected.SetResult();
+            }
         }
 
         FrameReader reader = new() {
