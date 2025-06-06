@@ -4,16 +4,13 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
-using NUnit.Framework;
+using Xunit;
 
 namespace SharpQuic.Tests;
 
-[TestFixture]
 public class QuicConnectionCloseTests {
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task IdleTimeoutTestAsync() {
-        CancellationTokenSource timeoutSource = new(5000);
-
         QuicConnection client = null;
 
         TaskCompletionSource source = new();
@@ -35,34 +32,30 @@ public class QuicConnectionCloseTests {
                         CustomTrustStore = {
                             certificate
                         }
-                    },
-                    CancellationToken = timeoutSource.Token
+                    }
                 });
 
                 source.SetResult();
             } catch(Exception e) {
                 source.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         QuicConnection server = await QuicConnection.ListenAsync(new() {
             LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
-            CertificateChain = [certificate],
-            CancellationToken = timeoutSource.Token
+            CertificateChain = [certificate]
         });
 
         await source.Task;
 
-        Assert.CatchAsync(async () => {
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => {
             await server.ReceiveStreamAsync();
         });
     }
 
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task ImmediateCloseTestAsync() {
-        CancellationTokenSource timeoutSource = new(5000);
-
         QuicConnection client = null;
 
         TaskCompletionSource source = new();
@@ -84,8 +77,7 @@ public class QuicConnectionCloseTests {
                         CustomTrustStore = {
                             certificate
                         }
-                    },
-                    CancellationToken = timeoutSource.Token
+                    }
                 });
 
                 source.SetResult();
@@ -94,19 +86,18 @@ public class QuicConnectionCloseTests {
             } catch(Exception e) {
                 source.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         QuicConnection server = await QuicConnection.ListenAsync(new() {
             LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
-            CertificateChain = [certificate],
-            CancellationToken = timeoutSource.Token
+            CertificateChain = [certificate]
         });
 
         await source.Task;
 
-        await Task.Run(() => Assert.CatchAsync(async () => {
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => {
             await server.ReceiveStreamAsync();
-        }));
+        });
     }
 }

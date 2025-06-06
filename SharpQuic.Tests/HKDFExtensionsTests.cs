@@ -1,13 +1,12 @@
 using System;
 using System.Security.Cryptography;
-using NUnit.Framework;
 using SharpQuic.Tls;
+using Xunit;
 
 namespace SharpQuic.Tests;
 
-[TestFixture]
 public class HKDFExtensionsTests {
-    [Test]
+    [Fact]
     public void ExpandLabelTest() {
         Span<byte> initialSalt = stackalloc byte[20];
 
@@ -25,7 +24,7 @@ public class HKDFExtensionsTests {
 
         Converter.HexToBytes("7db5df06e7a69e432496adedb00851923595221596ae2ae9fb8115c1e9ed0a44", initialSecretTest);
 
-        Assert.That(initialSecret.SequenceEqual(initialSecretTest));
+        Assert.True(initialSecret.SequenceEqual(initialSecretTest));
 
         Span<byte> clientInitialSecret = stackalloc byte[32];
 
@@ -35,7 +34,7 @@ public class HKDFExtensionsTests {
 
         Converter.HexToBytes("c00cf151ca5be075ed0ebfb5c80323c42d6b7db67881289af4008f1f6c357aea", clientInitialSecretTest);
 
-        Assert.That(clientInitialSecret.SequenceEqual(clientInitialSecretTest));
+        Assert.True(clientInitialSecret.SequenceEqual(clientInitialSecretTest));
 
         Span<byte> key = stackalloc byte[16];
 
@@ -45,6 +44,6 @@ public class HKDFExtensionsTests {
 
         Converter.HexToBytes("1f369613dd76d5467730efcbe3b1a22d", keyTest);
 
-        Assert.That(key.SequenceEqual(keyTest));
+        Assert.True(key.SequenceEqual(keyTest));
     }
 }

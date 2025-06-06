@@ -1,14 +1,13 @@
 using System;
 using System.IO;
 using System.Linq;
-using NUnit.Framework;
 using SharpQuic.Packets;
+using Xunit;
 
 namespace SharpQuic.Tests;
 
-[TestFixture]
 public class QuicPacketProtectionTests {
-    [Test]
+    [Fact]
     public void ProtectTest() {
         Span<byte> frame = stackalloc byte[1162];
 
@@ -35,7 +34,7 @@ public class QuicPacketProtectionTests {
 
         string header = Converter.BytesToHex(packet.EncodeUnprotectedHeader());
 
-        Assert.That(header.Equals("c300000001088394c8f03e5157080000449e00000002", StringComparison.CurrentCultureIgnoreCase));
+        Assert.True(header.Equals("c300000001088394c8f03e5157080000449e00000002", StringComparison.CurrentCultureIgnoreCase));
 
         QuicPacketProtection protection = new(EndpointType.Client, []);
 
@@ -43,7 +42,7 @@ public class QuicPacketProtectionTests {
 
         string packetHex = Converter.BytesToHex(encodedPacket);
 
-        Assert.That(packetHex.Equals(@"c000000001088394c8f03e5157080000 449e7b9aec34d1b1c98dd7689fb8ec11
+        Assert.True(packetHex.Equals(@"c000000001088394c8f03e5157080000 449e7b9aec34d1b1c98dd7689fb8ec11
             d242b123dc9bd8bab936b47d92ec356c 0bab7df5976d27cd449f63300099f399
             1c260ec4c60d17b31f8429157bb35a12 82a643a8d2262cad67500cadb8e7378c
             8eb7539ec4d4905fed1bee1fc8aafba1 7c750e2c7ace01e6005f80fcb7df6212
@@ -89,10 +88,10 @@ public class QuicPacketProtectionTests {
 
         InitialPacket unprotectedPacket = (InitialPacket)destinationProtection.Unprotect(stream, new(Tls.Enums.CipherSuite.Aes128GcmSHA256), null, null);
 
-        Assert.That(unprotectedPacket.DestinationConnectionId.SequenceEqual(packet.DestinationConnectionId));
-        Assert.That(unprotectedPacket.SourceConnectionId.SequenceEqual(packet.SourceConnectionId));
-        Assert.That(unprotectedPacket.Token.SequenceEqual(packet.Token));
-        Assert.That(unprotectedPacket.PacketNumber == packet.PacketNumber);
-        Assert.That(unprotectedPacket.Payload.SequenceEqual(packet.Payload));
+        Assert.True(unprotectedPacket.DestinationConnectionId.SequenceEqual(packet.DestinationConnectionId));
+        Assert.True(unprotectedPacket.SourceConnectionId.SequenceEqual(packet.SourceConnectionId));
+        Assert.True(unprotectedPacket.Token.SequenceEqual(packet.Token));
+        Assert.True(unprotectedPacket.PacketNumber == packet.PacketNumber);
+        Assert.True(unprotectedPacket.Payload.SequenceEqual(packet.Payload));
     }
 }

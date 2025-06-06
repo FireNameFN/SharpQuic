@@ -2,15 +2,14 @@ using System;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
-using NUnit.Framework;
 using SharpQuic.IO;
+using Xunit;
 
 namespace SharpQuic.Tests;
 
-[TestFixture]
 public class CutStreamTests {
-    [Test]
-    public async Task FillAsyncTest() {
+    [Fact]
+    public async Task FillTestAsync() {
         CutInputStream array = new(1024);
 
         byte[] data = new byte[1024];
@@ -37,13 +36,13 @@ public class CutStreamTests {
 
         byte[] readedData = new byte[1024];
 
-        await array.ReadAsync(readedData);
+        await array.ReadAsync(readedData, TestContext.Current.CancellationToken);
 
-        Assert.That(data.AsSpan().SequenceEqual(readedData));
+        Assert.True(data.AsSpan().SequenceEqual(readedData));
     }
 
-    [Test, Repeat(1000)]
-    public async Task BigReadAsyncTest() {
+    [Fact]
+    public async Task BigReadTestAsync() {
         CutInputStream array = new(512);
 
         byte[] data = new byte[2048];
@@ -56,16 +55,16 @@ public class CutStreamTests {
                 
                 await array.WriteAsync(data.AsMemory()[i..(i+256)], (ulong)i);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         byte[] readData = new byte[2048];
 
-        await array.ReadAsync(readData);
+        await array.ReadAsync(readData, TestContext.Current.CancellationToken);
 
-        Assert.That(data.AsSpan().SequenceEqual(readData));
+        Assert.True(data.AsSpan().SequenceEqual(readData));
     }
 
-    [Test]
+    [Fact]
     public async Task SmallReadsAndWritesTest() {
         CutInputStream stream = new(1024);
 
@@ -77,22 +76,22 @@ public class CutStreamTests {
 
         byte[] readData = new byte[2048];
 
-        await stream.ReadAsync(readData.AsMemory()[..256]);
+        await stream.ReadAsync(readData.AsMemory()[..256], TestContext.Current.CancellationToken);
 
         await stream.WriteAsync(data.AsMemory()[512..1024], 512);
 
-        await stream.ReadAsync(readData.AsMemory()[256..512]);
+        await stream.ReadAsync(readData.AsMemory()[256..512], TestContext.Current.CancellationToken);
 
-        await stream.ReadAsync(readData.AsMemory()[512..768]);
+        await stream.ReadAsync(readData.AsMemory()[512..768], TestContext.Current.CancellationToken);
 
-        await stream.ReadAsync(readData.AsMemory()[768..1024]);
+        await stream.ReadAsync(readData.AsMemory()[768..1024], TestContext.Current.CancellationToken);
 
         await stream.WriteAsync(data.AsMemory()[1024..2048], 1024);
 
-        await stream.ReadAsync(readData.AsMemory()[1024..1536]);
+        await stream.ReadAsync(readData.AsMemory()[1024..1536], TestContext.Current.CancellationToken);
 
-        await stream.ReadAsync(readData.AsMemory()[1536..2048]);
+        await stream.ReadAsync(readData.AsMemory()[1536..2048], TestContext.Current.CancellationToken);
 
-        Assert.That(data.AsSpan().SequenceEqual(readData));
+        Assert.True(data.AsSpan().SequenceEqual(readData));
     }
 }

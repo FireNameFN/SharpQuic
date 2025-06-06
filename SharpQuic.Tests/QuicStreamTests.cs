@@ -5,16 +5,13 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
-using NUnit.Framework;
+using Xunit;
 
 namespace SharpQuic.Tests;
 
-[TestFixture]
 public class QuicStreamTests {
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task QuicStreamTestAsync() {
-        CancellationTokenSource timeoutSource = new(60000);
-
         byte[] data = new byte[(1 << 20) * 100];
 
         RandomNumberGenerator.Fill(data);
@@ -30,8 +27,7 @@ public class QuicStreamTests {
                     Protocols = ["test"],
                     ChainPolicy = new() {
                         VerificationFlags = X509VerificationFlags.AllFlags
-                    },
-                    CancellationToken = timeoutSource.Token,
+                    }
                     //DebugLogging = true
                 });
 
@@ -55,7 +51,7 @@ public class QuicStreamTests {
 
                 source.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
@@ -64,8 +60,7 @@ public class QuicStreamTests {
         QuicConnection server = await QuicConnection.ListenAsync(new() {
             LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
-            CertificateChain = [certificate],
-            CancellationToken = timeoutSource.Token,
+            CertificateChain = [certificate]
             //DebugLogging = true,
             //DebugInputPacketLoss = 0.01,
             //DebugOutputPacketLoss = 0.01
@@ -89,13 +84,11 @@ public class QuicStreamTests {
 
         await source.Task;
 
-        Assert.That(receiveData.AsSpan().SequenceEqual(data));
+        Assert.True(receiveData.AsSpan().SequenceEqual(data));
     }
 
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task QuicStreamDelayTestAsync() {
-        CancellationTokenSource timeoutSource = new(30000);
-
         byte[] data = new byte[(1 << 20) * 10];
 
         RandomNumberGenerator.Fill(data);
@@ -112,7 +105,6 @@ public class QuicStreamTests {
                     ChainPolicy = new() {
                         VerificationFlags = X509VerificationFlags.AllFlags
                     },
-                    CancellationToken = timeoutSource.Token,
                     //DebugLogging = true
                     DebugOutputDelay = 50
                 });
@@ -137,7 +129,7 @@ public class QuicStreamTests {
 
                 source.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
@@ -147,7 +139,6 @@ public class QuicStreamTests {
             LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
             CertificateChain = [certificate],
-            CancellationToken = timeoutSource.Token,
             //DebugLogging = true,
             //DebugInputPacketLoss = 0.01,
             //DebugOutputPacketLoss = 0.01,
@@ -172,13 +163,11 @@ public class QuicStreamTests {
 
         await source.Task;
 
-        Assert.That(receiveData.AsSpan().SequenceEqual(data));
+        Assert.True(receiveData.AsSpan().SequenceEqual(data));
     }
 
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task QuicStreamSmallDataTestAsync() {
-        CancellationTokenSource timeoutSource = new(200000);
-
         byte[] data = new byte[8192];
 
         RandomNumberGenerator.Fill(data);
@@ -195,7 +184,6 @@ public class QuicStreamTests {
                     ChainPolicy = new() {
                         VerificationFlags = X509VerificationFlags.AllFlags
                     },
-                    CancellationToken = timeoutSource.Token,
                     DebugLogging = true
                 });
 
@@ -210,7 +198,7 @@ public class QuicStreamTests {
             } catch(Exception e) {
                 source.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
@@ -219,8 +207,7 @@ public class QuicStreamTests {
         QuicConnection server = await QuicConnection.ListenAsync(new() {
             LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
-            CertificateChain = [certificate],
-            CancellationToken = timeoutSource.Token,
+            CertificateChain = [certificate]
             //DebugLogging = true
         });
 
@@ -242,13 +229,11 @@ public class QuicStreamTests {
 
         await source.Task;
 
-        Assert.That(receiveData.AsSpan().SequenceEqual(data));
+        Assert.True(receiveData.AsSpan().SequenceEqual(data));
     }
 
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task QuicStreamChunksTestAsync() {
-        CancellationTokenSource timeoutSource = new(200000);
-
         byte[] data = new byte[(1 << 20) * 10];
 
         RandomNumberGenerator.Fill(data);
@@ -265,7 +250,6 @@ public class QuicStreamTests {
                     ChainPolicy = new() {
                         VerificationFlags = X509VerificationFlags.AllFlags
                     },
-                    CancellationToken = timeoutSource.Token,
                     DebugLogging = true
                 });
 
@@ -288,7 +272,7 @@ public class QuicStreamTests {
             } catch(Exception e) {
                 source.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
@@ -297,8 +281,7 @@ public class QuicStreamTests {
         QuicConnection server = await QuicConnection.ListenAsync(new() {
             LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
-            CertificateChain = [certificate],
-            CancellationToken = timeoutSource.Token,
+            CertificateChain = [certificate]
             //DebugLogging = true
         });
 
@@ -318,20 +301,18 @@ public class QuicStreamTests {
 
         //_ = Task.Run(() => stream.ReadAsync(receiveData));
 
-        await adapter.ReadExactlyAsync(receiveData.AsMemory()[..1024]);
-        await adapter.ReadExactlyAsync(receiveData.AsMemory()[1024..512000]);
-        await adapter.ReadExactlyAsync(receiveData.AsMemory()[512000..5120000]);
-        await adapter.ReadExactlyAsync(receiveData.AsMemory()[5120000..]);
+        await adapter.ReadExactlyAsync(receiveData.AsMemory()[..1024], TestContext.Current.CancellationToken);
+        await adapter.ReadExactlyAsync(receiveData.AsMemory()[1024..512000], TestContext.Current.CancellationToken);
+        await adapter.ReadExactlyAsync(receiveData.AsMemory()[512000..5120000], TestContext.Current.CancellationToken);
+        await adapter.ReadExactlyAsync(receiveData.AsMemory()[5120000..], TestContext.Current.CancellationToken);
 
         await source.Task;
 
-        Assert.That(receiveData.AsSpan().SequenceEqual(data));
+        Assert.True(receiveData.AsSpan().SequenceEqual(data));
     }
 
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task QuicStreamBidirectionalTestAsync() {
-        CancellationTokenSource timeoutSource = new(200000);
-
         byte[] data = new byte[(1 << 20) * 10];
 
         RandomNumberGenerator.Fill(data);
@@ -348,7 +329,6 @@ public class QuicStreamTests {
                     ChainPolicy = new() {
                         VerificationFlags = X509VerificationFlags.AllFlags
                     },
-                    CancellationToken = timeoutSource.Token,
                     DebugLogging = true
                 });
 
@@ -375,7 +355,7 @@ public class QuicStreamTests {
             } catch(Exception e) {
                 source.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
@@ -384,8 +364,7 @@ public class QuicStreamTests {
         QuicConnection server = await QuicConnection.ListenAsync(new() {
             LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
-            CertificateChain = [certificate],
-            CancellationToken = timeoutSource.Token,
+            CertificateChain = [certificate]
             //DebugLogging = true
         });
 
@@ -395,16 +374,16 @@ public class QuicStreamTests {
 
         byte[] b = new byte[1];
 
-        await adapter.ReadExactlyAsync(b);
+        await adapter.ReadExactlyAsync(b, TestContext.Current.CancellationToken);
 
         for(int i = 0; i < 1024; i++)
-            await adapter.WriteAsync(data.AsMemory().Slice(i, 1));
+            await adapter.WriteAsync(data.AsMemory().Slice(i, 1), TestContext.Current.CancellationToken);
 
-        await adapter.WriteAsync(data.AsMemory()[1024..1024000]);
+        await adapter.WriteAsync(data.AsMemory()[1024..1024000], TestContext.Current.CancellationToken);
 
-        await adapter.WriteAsync(data.AsMemory()[1024000..]);
+        await adapter.WriteAsync(data.AsMemory()[1024000..], TestContext.Current.CancellationToken);
 
-        await adapter.FlushAsync();
+        await adapter.FlushAsync(TestContext.Current.CancellationToken);
 
         await stream.FlushAsync(true);
 

@@ -1,11 +1,10 @@
 using System.IO;
-using NUnit.Framework;
+using Xunit;
 
 namespace SharpQuic.Tests;
 
-[TestFixture]
 public class SerializerTests {
-    [Test]
+    [Fact]
     public void WriteVariableLengthOn5Test() {
         MemoryStream stream = new();
 
@@ -13,10 +12,10 @@ public class SerializerTests {
 
         byte[] array = stream.ToArray();
 
-        Assert.That(array is [0b00_000101]);
+        Assert.True(array is [0b00_000101]);
     }
 
-    [Test]
+    [Fact]
     public void WriteVariableLengthOn300Test() {
         MemoryStream stream = new();
 
@@ -24,10 +23,10 @@ public class SerializerTests {
 
         byte[] array = stream.ToArray();
 
-        Assert.That(array is [0b01_000001, 0b00101100]);
+        Assert.True(array is [0b01_000001, 0b00101100]);
     }
 
-    [Test]
+    [Fact]
     public void ReadVeriableLengthOn5Test() {
         MemoryStream stream = new();
 
@@ -37,10 +36,10 @@ public class SerializerTests {
 
         ulong value = Serializer.ReadVariableLength(stream).Value;
 
-        Assert.That(value == 5);
+        Assert.Equal(5u, value);
     }
 
-    [Test]
+    [Fact]
     public void ReadVeriableLengthOn300Test() {
         MemoryStream stream = new();
 
@@ -50,6 +49,6 @@ public class SerializerTests {
 
         ulong value = Serializer.ReadVariableLength(stream).Value;
 
-        Assert.That(value == 300);
+        Assert.Equal(300u, value);
     }
 }

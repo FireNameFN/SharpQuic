@@ -4,16 +4,13 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
-using NUnit.Framework;
+using Xunit;
 
 namespace SharpQuic.Tests;
 
-[TestFixture]
 public class QuicConnectionTests {
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task QuicConnectionTestAsync() {
-        CancellationTokenSource timeoutSource = new(5000);
-
         QuicConnection client = null;
 
         TaskCompletionSource source = new();
@@ -35,34 +32,30 @@ public class QuicConnectionTests {
                         CustomTrustStore = {
                             certificate
                         }
-                    },
-                    CancellationToken = timeoutSource.Token
+                    }
                 });
 
                 source.SetResult();
             } catch(Exception e) {
                 source.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         QuicConnection server = await QuicConnection.ListenAsync(new() {
             LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
             Protocols = ["test"],
-            CertificateChain = [certificate],
-            CancellationToken = timeoutSource.Token
+            CertificateChain = [certificate]
         });
 
         await source.Task;
 
-        Assert.That(client.applicationStage.KeySet.SourceKey.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationKey));
-        Assert.That(client.applicationStage.KeySet.SourceIv.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationIv));
-        Assert.That(client.applicationStage.KeySet.SourceHp.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationHp));
+        Assert.True(client.applicationStage.KeySet.SourceKey.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationKey));
+        Assert.True(client.applicationStage.KeySet.SourceIv.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationIv));
+        Assert.True(client.applicationStage.KeySet.SourceHp.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationHp));
     }
 
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task QuicConnectionClientAuthenticationTestAsync() {
-        CancellationTokenSource timeoutSource = new(5000);
-
         QuicConnection client = null;
 
         TaskCompletionSource source = new();
@@ -87,15 +80,14 @@ public class QuicConnectionTests {
                         CustomTrustStore = {
                             serverCertificate
                         }
-                    },
-                    CancellationToken = timeoutSource.Token
+                    }
                 });
 
                 source.SetResult();
             } catch(Exception e) {
                 source.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         QuicConnection server = await QuicConnection.ListenAsync(new() {
             LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
@@ -108,21 +100,18 @@ public class QuicConnectionTests {
                     clientCertificate
                 }
             },
-            ClientAuthentication = true,
-            CancellationToken = timeoutSource.Token
+            ClientAuthentication = true
         });
 
         await source.Task;
 
-        Assert.That(client.applicationStage.KeySet.SourceKey.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationKey));
-        Assert.That(client.applicationStage.KeySet.SourceIv.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationIv));
-        Assert.That(client.applicationStage.KeySet.SourceHp.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationHp));
+        Assert.True(client.applicationStage.KeySet.SourceKey.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationKey));
+        Assert.True(client.applicationStage.KeySet.SourceIv.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationIv));
+        Assert.True(client.applicationStage.KeySet.SourceHp.AsSpan().SequenceEqual(server.applicationStage.KeySet.DestinationHp));
     }
 
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task QuicDoubleConnectionTestAsync() {
-        CancellationTokenSource timeoutSource = new(1500);
-
         CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
         X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
@@ -155,15 +144,14 @@ public class QuicConnectionTests {
                         CustomTrustStore = {
                             certificate
                         }
-                    },
-                    CancellationToken = timeoutSource.Token
+                    }
                 });
 
                 source1.SetResult();
             } catch(Exception e) {
                 source1.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         TaskCompletionSource source2 = new();
 
@@ -178,15 +166,14 @@ public class QuicConnectionTests {
                         CustomTrustStore = {
                             certificate
                         }
-                    },
-                    CancellationToken = timeoutSource.Token
+                    }
                 });
 
                 source2.SetResult();
             } catch(Exception e) {
                 source2.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         TaskCompletionSource source3 = new();
 
@@ -195,15 +182,14 @@ public class QuicConnectionTests {
                 QuicConnection client = await QuicConnection.ListenAsync(new() {
                     LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
                     Protocols = ["test"],
-                    CertificateChain = [certificate],
-                    CancellationToken = timeoutSource.Token
+                    CertificateChain = [certificate]
                 });
 
                 source3.SetResult();
             } catch(Exception e) {
                 source3.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         TaskCompletionSource source4 = new();
 
@@ -212,15 +198,14 @@ public class QuicConnectionTests {
                 QuicConnection client = await QuicConnection.ListenAsync(new() {
                     LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
                     Protocols = ["test"],
-                    CertificateChain = [certificate],
-                    CancellationToken = timeoutSource.Token
+                    CertificateChain = [certificate]
                 });
 
                 source4.SetResult();
             } catch(Exception e) {
                 source4.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         await source1.Task;
 
@@ -235,10 +220,8 @@ public class QuicConnectionTests {
         //await semaphore.WaitAsync(timeoutSource.Token);
     }
 
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task QuicDoubleConnectionFromOnePointTestAsync() {
-        CancellationTokenSource timeoutSource = new(1500);
-
         CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
         X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddYears(1));
@@ -250,15 +233,14 @@ public class QuicConnectionTests {
                 QuicConnection client = await QuicConnection.ListenAsync(new() {
                     LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
                     Protocols = ["test"],
-                    CertificateChain = [certificate],
-                    CancellationToken = timeoutSource.Token
+                    CertificateChain = [certificate]
                 });
 
                 source3.SetResult();
             } catch(Exception e) {
                 source3.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         TaskCompletionSource source4 = new();
 
@@ -267,15 +249,14 @@ public class QuicConnectionTests {
                 QuicConnection client = await QuicConnection.ListenAsync(new() {
                     LocalPoint = IPEndPoint.Parse("0.0.0.0:50000"),
                     Protocols = ["test"],
-                    CertificateChain = [certificate],
-                    CancellationToken = timeoutSource.Token
+                    CertificateChain = [certificate]
                 });
 
                 source4.SetResult();
             } catch(Exception e) {
                 source4.SetException(e);
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         QuicConnection client = await QuicConnection.ConnectAsync(new() {
             RemotePoint = IPEndPoint.Parse("127.0.0.1:50000"),
@@ -286,8 +267,7 @@ public class QuicConnectionTests {
                 CustomTrustStore = {
                     certificate
                 }
-            },
-            CancellationToken = timeoutSource.Token
+            }
         });
 
         QuicConnection client2 = await QuicConnection.ConnectAsync(new() {
@@ -300,8 +280,7 @@ public class QuicConnectionTests {
                 CustomTrustStore = {
                     certificate
                 }
-            },
-            CancellationToken = timeoutSource.Token
+            }
         });
 
         await source3.Task;
@@ -309,7 +288,7 @@ public class QuicConnectionTests {
         await source4.Task;
     }
 
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task ConnectToExternalServerTestAsync() {
         await QuicConnection.ConnectAsync(new() {
             RemotePoint = IPEndPoint.Parse("127.0.0.1:853"),
@@ -317,7 +296,7 @@ public class QuicConnectionTests {
         });
     }
 
-    [Test, Explicit]
+    [Fact(Explicit = true)]
     public async Task ListenExternalClientTestAsync() {
         CertificateRequest request = new("cn=Test CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 

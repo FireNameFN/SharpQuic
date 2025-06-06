@@ -3,15 +3,13 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
-using NUnit.Framework;
-using SharpQuic.Frames;
 using SharpQuic.Tls;
+using Xunit;
 
 namespace SharpQuic.Tests;
 
-[TestFixture]
 public class TlsClientTests {
-    [Test]
+    [Fact]
     public void TlsClientTest() {
         CertificateRequest request = new("cn=TlsClientTest CA", RSA.Create(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         
@@ -34,13 +32,13 @@ public class TlsClientTests {
         while(stream.Position < stream.Length)
             client.TryReceiveHandshake(stream);
 
-        Assert.That(client.key.SequenceEqual(server.key));
+        Assert.True(client.key.SequenceEqual(server.key));
 
         client.DeriveHandshakeSecrets();
         server.DeriveHandshakeSecrets();
 
-        Assert.That(client.clientHandshakeSecret.SequenceEqual(server.clientHandshakeSecret));
-        Assert.That(client.serverHandshakeSecret.SequenceEqual(server.serverHandshakeSecret));
+        Assert.True(client.clientHandshakeSecret.SequenceEqual(server.clientHandshakeSecret));
+        Assert.True(client.serverHandshakeSecret.SequenceEqual(server.serverHandshakeSecret));
 
         stream = new(server.SendServerHandshake());
 
@@ -50,7 +48,7 @@ public class TlsClientTests {
         client.DeriveApplicationSecrets();
         server.DeriveApplicationSecrets();
 
-        Assert.That(client.clientApplicationSecret.SequenceEqual(server.clientApplicationSecret));
-        Assert.That(client.serverApplicationSecret.SequenceEqual(server.serverApplicationSecret));
+        Assert.True(client.clientApplicationSecret.SequenceEqual(server.clientApplicationSecret));
+        Assert.True(client.serverApplicationSecret.SequenceEqual(server.serverApplicationSecret));
     }
 }
