@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace SharpQuic;
 
-static class QuicPort {
+public static class QuicPort {
     static readonly Dictionary<IPEndPoint, Socket> sockets = [];
 
     static readonly List<QuicConnection> connections = [];
@@ -21,7 +21,17 @@ static class QuicPort {
         return new(SocketType.Dgram, ProtocolType.Udp);
     }
 
-    public static async Task SubscribeAsync(QuicConnection connection, IPEndPoint local, bool listener) {
+    public static async Task<Socket> GetSocket(IPEndPoint local) {
+        await semaphore.WaitAsync();
+
+        Socket socket = sockets[local];
+
+        semaphore.Release();
+
+        return socket;
+    }
+
+    internal static async Task SubscribeAsync(QuicConnection connection, IPEndPoint local, bool listener) {
         await semaphore.WaitAsync();
 
         Socket socket = GetSocket(local);
@@ -57,7 +67,7 @@ static class QuicPort {
         }
     }
 
-    public static async Task SubscribeAsync(QuicConnection connection, IPEndPoint local, Socket socket) {
+    internal static async Task SubscribeAsync(QuicConnection connection, IPEndPoint local, Socket socket) {
         await semaphore.WaitAsync();
 
         sockets[local] = socket;
@@ -69,13 +79,13 @@ static class QuicPort {
         _ = Task.Run(() => Runner(socket));
     }
 
-    public static void Unsubscribe(QuicConnection connection) {
+    internal static void Unsubscribe(QuicConnection connection) {
         connections.Remove(connection);
 
         listeners.Remove(connection);
     }
 
-    public static void UnsubscribeListener() {
+    internal static void UnsubscribeListener() {
         listeners.RemoveAt(0);
     }
 
